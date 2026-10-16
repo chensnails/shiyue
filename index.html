@@ -444,51 +444,6 @@
           </div>
         </div>
       </section>
-<section class="tab-pane" data-pane="model" hidden>
-        <div class="form">
-          <div class="form-row">
-            <label for="llmBaseUrl">模型地址（OpenAI 兼容）</label>
-            <input id="llmBaseUrl" type="url" placeholder="https://api.siliconflow.cn/v1/chat/completions" spellcheck="false">
-            <small class="form-tip">支持任意 OpenAI 兼容接口；填到 <code>/v1</code> 或完整的 <code>/chat/completions</code> 均可</small>
-          </div>
-          <div class="form-row">
-            <label for="llmApiKey">API Key</label>
-            <div class="input-with-btn">
-              <input id="llmApiKey" type="password" placeholder="sk-..." spellcheck="false" autocomplete="off">
-              <button class="btn btn-ghost btn-sm" id="toggleLlmKey" type="button">显示</button>
-              <button class="btn btn-ghost btn-sm" id="clearLlmKey" type="button">清除</button>
-            </div>
-            <small class="form-tip" id="llmKeyHint">保存后不再回显明文，只显示掩码；留空即保持原值</small>
-          </div>
-          <div class="form-grid form-grid-2">
-            <div class="form-row">
-              <label for="llmModel">模型名称</label>
-              <input id="llmModel" type="text" placeholder="Qwen/Qwen3-8B" spellcheck="false" list="modelPresets">
-              <datalist id="modelPresets">
-                <option value="Qwen/Qwen3-8B"></option>
-                <option value="Qwen/Qwen3-30B-A3B-Instruct-2507"></option>
-                <option value="Qwen/Qwen3-235B-A22B-Instruct-2507"></option>
-                <option value="deepseek-ai/DeepSeek-V3"></option>
-                <option value="THUDM/GLM-4-9B-0414"></option>
-              </datalist>
-              <small class="form-tip">免费额度推荐 <strong>Qwen/Qwen3-8B</strong>；系统提示已内置 <code>/no_think</code> 关闭思考模式，速度更快</small>
-            </div>
-            <div class="form-row">
-              <label for="llmTemp">温度</label>
-              <input id="llmTemp" type="number" min="0" max="1.5" step="0.05" value="0.3">
-              <small class="form-tip">越低越稳定保守，越高越发散。摘要建议 0.2 ~ 0.5</small>
-            </div>
-          </div>
-          <div class="test-result" id="llmResult"></div>
-        </div>
-        <div class="pane-foot">
-          <span class="hint">这是你自己的模型配置，仅对当前账号生效（用于「日报」等 AI 功能）；留空的项会回退到站点默认模型</span>
-          <div class="pane-foot-btns">
-            <button class="btn btn-ghost" id="testLlmBtn">测试模型</button>
-            <button class="btn btn-primary" id="saveLlmBtn">保存模型</button>
-          </div>
-        </div>
-      </section>
 <section class="tab-pane" data-pane="account" hidden>
         <div class="pane-scroll">
           <div class="test-result" id="accResult"></div>

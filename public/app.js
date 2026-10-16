@@ -102,7 +102,6 @@ const feedSelect = $('#feedSelect');
 const digestBody = $('#digestBody');
 const digestDateSel = $('#digestDate');
 const digestSub = $('#digestSub');
-const llmResult = $('#llmResult');
 const dgResult = $('#dgResult');
 const feedResult = $('#feedResult');
 const viewModeEl = $('#viewMode');
@@ -830,10 +829,9 @@ function settingsTabEffect(name) {
     p.hidden = p.getAttribute('data-pane') !== name;
   });
   if (name === 'source') loadSourceForm();
-  if (name === 'model') loadModelForm();
   // 「日报」已经不是这里的 tab 了，搬去「AI → 日报设置」子页
   if (name === 'account') loadAccountForm();
-  // appearance / about 已 React 化，无旧 loader
+  // appearance / model / about 已 React 化，随面板挂载自行加载，无旧 loader
   // 状态页是唯一会自己轮询的页面，切走就停，别在后台空转
   if (name === 'status') { loadStatusForm(); startStatusPolling(); } else stopStatusPolling();
 }
@@ -2242,97 +2240,8 @@ $('#genDigestBtn').addEventListener('click', () => generateDigest(false));
 $('#regenDigestBtn').addEventListener('click', () => generateDigest(true));
 digestDateSel.addEventListener('change', () => showDigest(digestDateSel.value));
 
-/* 模型：显示/隐藏 Key */
-$('#toggleLlmKey').addEventListener('click', () => {
-  const inp = $('#llmApiKey');
-  const show = inp.type === 'password';
-  inp.type = show ? 'text' : 'password';
-  $('#toggleLlmKey').textContent = show ? '隐藏' : '显示';
-});
-
-/* 模型：测试 */
-$('#testLlmBtn').addEventListener('click', async () => {
-  const btn = $('#testLlmBtn');
-  btn.disabled = true; btn.textContent = '测试中…';
-  llmResult.className = 'test-result';
-  try {
-    const res = await apiFetch('/api/digest/test-llm', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        llm: { baseUrl: $('#llmBaseUrl').value, apiKey: $('#llmApiKey').value, model: $('#llmModel').value },
-      }),
-    });
-    const data = await res.json();
-    if (data.ok) showResult(llmResult, true, `模型可用：${data.reply || '连接正常'}`);
-    else showResult(llmResult, false, '调用失败：' + (data.error || '未知错误'));
-  } catch (err) {
-    showResult(llmResult, false, '调用失败：' + (err.message || err));
-  } finally {
-    btn.disabled = false; btn.textContent = '测试模型';
-  }
-});
-
-/* 模型：保存（按账号持久化，普通用户也能配自己的模型） */
-$('#saveLlmBtn').addEventListener('click', async () => {
-  const btn = $('#saveLlmBtn');
-  btn.disabled = true; btn.textContent = '保存中…';
-  try {
-    const typedKey = $('#llmApiKey').value.trim();
-    const llm = {
-      baseUrl: $('#llmBaseUrl').value,
-      model: $('#llmModel').value,
-      temperature: $('#llmTemp').value,
-    };
-    // 留空 = 保持服务端已保存的那把 Key（前端拿不到明文，也就没法回填）
-    if (typedKey) llm.apiKey = typedKey;
-
-    const res = await apiFetch('/api/prefs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ llm }),
-    });
-    const data = await res.json();
-    if (!res.ok) { showResult(llmResult, false, data.error || '保存失败'); return; }
-    showResult(llmResult, true, typedKey ? '模型配置与 API Key 已保存' : '模型配置已保存');
-    toast(typedKey ? '模型配置与 API Key 已保存' : '模型配置已保存');
-    await loadModelForm();
-  } catch (err) {
-    showResult(llmResult, false, '保存失败：' + (err.message || err));
-  } finally {
-    btn.disabled = false; btn.textContent = '保存模型';
-  }
-});
-
-/* 模型：清除已保存的 Key（按账号清除，不影响其他用户） */
-$('#clearLlmKey').addEventListener('click', async () => {
-  if (!confirm('确定清除已保存的 API Key？\n清除后将回退使用站点默认模型配置（如有），否则日报将无法调用模型。')) return;
-  const btn = $('#clearLlmKey');
-  btn.disabled = true;
-  try {
-    const res = await apiFetch('/api/prefs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        llm: {
-          baseUrl: $('#llmBaseUrl').value,
-          model: $('#llmModel').value,
-          temperature: $('#llmTemp').value,
-          clearApiKey: true,
-        },
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) { showResult(llmResult, false, data.error || '清除失败'); return; }
-    showResult(llmResult, true, 'API Key 已清除');
-    toast('API Key 已清除');
-    await loadModelForm();
-  } catch (err) {
-    showResult(llmResult, false, '清除失败：' + (err.message || err));
-  } finally {
-    btn.disabled = false;
-  }
-});
+/* 模型面板已 React 化（src/settings/ModelPane.jsx）：显示/隐藏 Key、测试、保存、
+   清除四个动作随面板挂载/卸载自洽完成，请求体与旧实现逐字段一致，旧绑定移除 */
 
 /* 日报设置：联动提示（含两个折叠分组的摘要行） */
 ['#dgEnabled', '#dgTime', '#dgScope', '#dgMaxPerFeed', '#dgMaxTotal', '#dgKeepDays'].forEach((sel) => {
@@ -3632,39 +3541,8 @@ async function generateDigest(force) {
 }
 
 /* ============================================================
- * 设置：模型 / 日报
+ * 设置：日报（模型面板已 React 化，见 src/settings/ModelPane.jsx）
  * ============================================================ */
-async function loadModelForm() {
-  try {
-    const res = await apiFetch('/api/prefs');
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
-    const llm = data.llm || {};
-    state.model = llm;   // 缓存，供保存时回退未改字段
-    $('#llmBaseUrl').value = llm.baseUrl || '';
-    $('#llmModel').value = llm.model || '';
-    $('#llmTemp').value = String(llm.temperature == null ? 0.3 : llm.temperature);
-
-    /* API Key 一律不回填明文：服务端只给「有没有存」+ 掩码。
-     * 输入框永远留空，留空 = 不修改；敲了新内容才会替换。 */
-    const keyInput = $('#llmApiKey');
-    const saved = !!llm.apiKeySet;
-    keyInput.value = '';
-    keyInput.type = 'password';
-    $('#toggleLlmKey').textContent = '显示';
-    keyInput.placeholder = saved ? '已保存，留空则不修改' : 'sk-...';
-    $('#clearLlmKey').hidden = !saved;
-
-    const hint = $('#llmKeyHint');
-    if (hint) {
-      hint.innerHTML = saved
-        ? `已保存：<code>${escapeHtml(llm.apiKeyHint || '••••')}</code> · 加密存储，不回显明文；要更换就直接粘贴新的，要删除点「清除」`
-        : '尚未设置。保存后以加密形式落库，页面只显示掩码。';
-    }
-  } catch (err) {
-    showResult(llmResult, false, '读取配置失败：' + (err.message || err));
-  }
-}
 
 async function loadDigestForm() {
   try {
@@ -4297,7 +4175,7 @@ window.shiyue = {
   refresh: () => { const b = $('#refreshBtn'); if (b) b.click(); },
   scrollTop: () => window.scrollTo({ top: 0, behavior: prefersReducedMotion() ? 'auto' : 'smooth' }),
   // —— v1.3.0 起 React 化组件的桥接面（设置弹层 / 外观 / 关于） ——
-  apiFetch, isAdmin,
+  apiFetch, isAdmin, toast,
   lockPageScroll, unlockPageScroll, stopStatusPolling,
   settingsTabEffect, getLegacySettingsPane, getSettingsSummary,
   getAppearance: readAppearance, setAppearance, resetAppearance,
