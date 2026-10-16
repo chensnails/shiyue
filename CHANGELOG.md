@@ -18,7 +18,25 @@
 
 ---
 
-## [1.4.0] — 2026-10-16
+## [1.5.0] — 2026-10-16
+
+新增：
+
+- **「数据源」设置面板 React 化**（React 渐进式迁移的 P2c 阶段）：面板迁往 `src/settings/SourcePane.jsx`，DOM 结构、ID、类名、data 属性与全部 API 契约逐字段保留，视觉与交互无变化；legacy-slot 承接的面板收窄为「账号 / 状态」。
+  - 数据流沿用混合期约定：频道数据以旧 app 的 `window.shiyue.state` 为单一数据源（原地修改 + tick 重绘），服务端往返统一走桥 `loadFeeds()` 刷新共享 state；侧栏下拉（`renderFeedSelect` / `renderReaderChannels`）与页面重载随操作同步。
+  - 拖拽排序由 Pointer 事件移植（桌面 + 触屏通用）：频道组内重排 / 跨组落库 `/api/feeds/reorder`，分组重排落库 `/api/prefs`（groupOrder），拖拽过程有声明式落点指示。
+  - 采集参数（管理员专属）进入面板拉 `/api/config` 回填；`cfgLoaded` 守卫复刻旧 `srcFormReady` 语义——没加载完禁止保存，避免把兜底值当成用户设置存下去。
+  - 折叠分组状态按账号持久化（`users.prefs.layout.collapsedGroups`），可折叠 section 的开合同样按账号记住（复用 `bindSections` 机制，存档无缝衔接）。
+- 迁移中顺手清理落后实现（遵循「技术落后 / 体验不好的可丢弃」原则）：
+  - **修复「出网代理」不回填的 bug**：服务端 `GET /api/config` 原来漏返 `source.proxyUrl`，管理员重开面板代理输入框是空的，再点保存会被清空——本次服务端补返该字段，GET 与 POST 字段集一致。
+  - 频道重命名由命令式就地改 `innerHTML` 改为受控编辑态（Enter 提交 / Esc 取消 / 失焦提交）。
+  - 排序 / 跨组后同步刷新工具栏频道下拉（旧实现漏更 `renderFeedSelect`）。
+  - 采集参数拉取失败不再把整个面板打成「读取失败」（频道列表正常展示，参数区保持兜底值并禁止保存，toast 报错）。
+  - 增删频道后不再重复请求 `/api/config`（旧实现每次 add/delete 都重拉一遍全局配置）。
+  - 行内控件保存期间逐控件禁用（`pendingIds`），防重复提交；保存失败时受控控件回滚到服务端值并报错误 toast。
+  - 每频道频率 / 序号输入等即时生效路径都带非法输入复原。
+
+---
 
 新增：
 

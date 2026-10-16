@@ -2,12 +2,12 @@
  *
  * 渐进式迁移策略（与命令面板一致的混合期方案）：
  * - 弹层外壳（遮罩 / 标题 / tab 栏 / 关闭）由 React 渲染；
- * - 「外观 / 模型 / 关于」三个面板为 React 组件（本目录 AppearancePane /
- *   ModelPane / AboutPane）；
- * - 其余面板（数据源 / 账号 / 状态）暂由旧 DOM 承接：它们装在
+ * - 「数据源 / 模型 / 外观 / 关于」四个面板已 React 化（本目录 SourcePane /
+ *   ModelPane / AppearancePane / AboutPane，P2c 起数据源迁出）；
+ * - 其余面板（账号 / 状态）暂由旧 DOM 承接：它们装在
  *   index.html 的 #legacyPanes 隐藏容器里，选中对应 tab 时由本组件搬进
  *   tab-pane-legacy 插槽（appendChild 移动节点，旧监听与 ID 全部保留，
- *   行为零变化），随 P2c~P2d 逐个迁移后移除。
+ *   行为零变化），随 P2d 迁移后移除。
  * - 旧 app.js 的 openSettings/closeSettings 委托给本组件注册的宿主；
  *   tab 切换副作用（loaders / 状态轮询）走 window.shiyue.settingsTabEffect。
  */
@@ -16,6 +16,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { AboutPane } from './AboutPane.jsx';
 import { AppearancePane } from './AppearancePane.jsx';
 import { ModelPane } from './ModelPane.jsx';
+import { SourcePane } from './SourcePane.jsx';
 
 const TABS = [
   ['source', '数据源'],
@@ -27,8 +28,8 @@ const TABS = [
 ];
 // 管理员专属 tab（与管理端约定一致；模型配置每用户独立，普通用户也能配）
 const ADMIN_TABS = ['status'];
-// 尚未 React 化的面板（P2b 起模型已迁出）：由旧 DOM 经 legacy-slot 承接
-const LEGACY_TABS = ['source', 'account', 'status'];
+// 尚未 React 化的面板（P2c 起数据源 / 模型已迁出）：由旧 DOM 经 legacy-slot 承接
+const LEGACY_TABS = ['account', 'status'];
 
 const S = () => (typeof window !== 'undefined' ? window.shiyue : null);
 const isAdminNow = () => !!(S() && S().isAdmin && S().isAdmin());
@@ -156,6 +157,7 @@ export function SettingsModal() {
         </div>
 
         <div className="modal-body">
+          {tab === 'source' && open && <SourcePane admin={admin} />}
           {tab === 'appearance' && open && <AppearancePane />}
           {tab === 'model' && open && <ModelPane />}
           {tab === 'about' && open && <AboutPane />}

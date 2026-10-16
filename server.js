@@ -1345,6 +1345,9 @@ const server = http.createServer(async (req, res) => {
             timeoutSeconds: settings.source.timeoutSeconds,
             concurrency: settings.source.concurrency,
             autoRefreshMinutes: settings.source.autoRefreshMinutes,
+            // v1.5.0 修复：原来漏返该字段，前端「出网代理」输入框重开面板后是空的，
+            // 用户再点保存会把我置成空——GET 与 POST 的字段集必须一致
+            proxyUrl: settings.source.proxyUrl,
           },
         });
         return;

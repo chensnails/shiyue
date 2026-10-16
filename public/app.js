@@ -103,7 +103,6 @@ const digestBody = $('#digestBody');
 const digestDateSel = $('#digestDate');
 const digestSub = $('#digestSub');
 const dgResult = $('#dgResult');
-const feedResult = $('#feedResult');
 const viewModeEl = $('#viewMode');
 /* 阅读页 */
 const readerChannels = $('#readerChannels');
@@ -174,30 +173,6 @@ function fmtDate(ts) {
   if (yesterday) return `昨天 ${hm}`;
   if (d.getFullYear() === now.getFullYear()) return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${hm}`;
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${hm}`;
-}
-
-/** 设置面板里显示「今天 12:36」这类相对时间 */
-function fmtDateTime(ts) {
-  if (!ts) return '';
-  const d = new Date(ts);
-  const p = (n) => String(n).padStart(2, '0');
-  const hm = `${p(d.getHours())}:${p(d.getMinutes())}`;
-  const now = new Date();
-  const sameDay = d.toDateString() === now.toDateString();
-  const yesterday = new Date(now.getTime() - 86400000).toDateString() === d.toDateString();
-  if (sameDay) return `今天 ${hm}`;
-  if (yesterday) return `昨天 ${hm}`;
-  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${hm}`;
-}
-
-/** 订阅地址只显示「主机名 + 路径」，太长就截断 */
-function prettyUrl(u) {
-  try {
-    const x = new URL(u);
-    const path = x.pathname.replace(/\/$/, '');
-    const s = x.host + path;
-    return s.length > 64 ? s.slice(0, 62) + '…' : s;
-  } catch (_) { return String(u || ''); }
 }
 
 function sizeToMB(s) {
@@ -295,9 +270,6 @@ function currentViewMode() {
 function loadCollapsedGroups() {
   const arr = Array.isArray(layoutPref.collapsedGroups) ? layoutPref.collapsedGroups : [];
   return new Set(arr.filter((g) => typeof g === 'string'));
-}
-function saveCollapsedGroups(set) {
-  setLayout('collapsedGroups', [...set]);
 }
 
 /** 把模式写到 state / DOM / 按钮态；persist=true 时才写账号（手动切换才记） */
@@ -794,26 +766,21 @@ function renderSkeletons(n = 8) {
 // 设置弹层自 v1.3.0 起外壳 React 化（挂载点 #settingsRoot，组件见 src/settings/）：
 // 开合状态由 React 组件同步到 window.__settingsOpen，旧 #settingsMask / #settingsSummary
 // DOM 已移除；openSettings / closeSettings 委托给 React 宿主 window.__settingsHost。
-const feedListEl = $('#feedList');
-const settingsHint = $('#settingsHint');
 const accResult = $('#accResult');
 
 /* 管理员专属的 tab（状态）；模型配置每用户独立，普通用户也能配 */
 const ADMIN_TABS = ['status'];
 const isAdmin = () => state.role === 'admin';
 
-/** 按角色显隐设置里管理员专属的部分：模型/状态 tab、采集参数、用户管理、保存设置、日报设置 */
+/** 按角色显隐设置里管理员专属的部分：状态 tab（React 外壳过滤）、用户管理、日报设置；
+ *  采集参数与「保存设置」按钮自 v1.5.0 起在 React 数据源面板内按 admin 显隐 */
 function applyRoleUI() {
   const admin = isAdmin();
   // 设置弹层 tab 已 React 化：按角色过滤交给宿主（管理员专属 tab 由外壳不再渲染）
   const host = window.__settingsHost;
   if (host && host.setAdminFlag) host.setAdminFlag(admin);
-  const srcParams = document.querySelector('[data-sec="src-params"]');
-  if (srcParams) srcParams.hidden = !admin;          // 采集参数是站点级设置
   const usersSec = $('#accUsersSec');
   if (usersSec) usersSec.hidden = !admin;            // 用户管理仅管理员
-  const saveSrc = $('#saveSourceBtn');
-  if (saveSrc) saveSrc.hidden = !admin;              // 普通用户没有「全局采集参数」可存
   const aiSettings = document.querySelector('#aiNav [data-ai="settings"]');
   if (aiSettings) aiSettings.hidden = !admin;        // 日报设置是全局设置
   // 普通用户若正停在管理员子页（如深链 #ai/settings），退回默认子页
@@ -828,10 +795,9 @@ function settingsTabEffect(name) {
   $$('#legacyPanes .tab-pane, .tab-pane-legacy .tab-pane').forEach((p) => {
     p.hidden = p.getAttribute('data-pane') !== name;
   });
-  if (name === 'source') loadSourceForm();
   // 「日报」已经不是这里的 tab 了，搬去「AI → 日报设置」子页
   if (name === 'account') loadAccountForm();
-  // appearance / model / about 已 React 化，随面板挂载自行加载，无旧 loader
+  // source / appearance / model / about 已 React 化，随面板挂载自行加载，无旧 loader
   // 状态页是唯一会自己轮询的页面，切走就停，别在后台空转
   if (name === 'status') { loadStatusForm(); startStatusPolling(); } else stopStatusPolling();
 }
@@ -891,382 +857,6 @@ function showResult(el, ok, msg) {
   if (ok) setTimeout(() => { el.className = 'test-result'; }, 4000);
 }
 
-/* ---------- 数据源 ---------- */
-let srcFormReady = false;   // 表单是否已被配置填充过；没填充就禁止保存，避免把兜底值当成用户设置存下去
-
-/** 给 select 赋一个可能不在选项列表里的值：不在就先补一个选项，避免静默回落到第一项（会把设置改坏） */
-function setSelectValue(el, val) {
-  if (!el) return;
-  const v = String(val == null ? '' : val);
-  if (![...el.options].some((o) => o.value === v)) {
-    const o = document.createElement('option');
-    o.value = v;
-    o.textContent = v;
-    el.appendChild(o);
-  }
-  el.value = v;
-}
-
-async function loadSourceForm() {
-  srcFormReady = false;
-  try {
-    // 「采集参数」是站点级设置，只有管理员能读 /api/config；普通用户只取自己的频道列表
-    const admin = isAdmin();
-    const [feedsRes, cfgRes] = await Promise.all([
-      apiFetch('/api/feeds'),
-      admin ? apiFetch('/api/config') : Promise.resolve(null),
-    ]);
-    if (!feedsRes.ok) throw new Error('HTTP ' + feedsRes.status);
-    const data = await feedsRes.json();
-    state.feedList = data.feeds || [];
-    state.feedMeta = data;
-    state.groupOrder = Array.isArray(data.groupOrder) ? data.groupOrder : [];
-    state.collapsedGroups = loadCollapsedGroups();
-    if (admin && cfgRes) {
-      state.config = await cfgRes.json();
-      const src = state.config.source || {};
-      setSelectValue($('#srcRefresh'), src.refreshMinutes);
-      $('#srcKeep').value = String(src.keepPerFeed);
-      setSelectValue($('#srcKeepDays'), src.keepDays == null ? 0 : src.keepDays);
-      $('#srcTimeout').value = String(src.timeoutSeconds);
-      $('#srcConcurrency').value = String(src.concurrency);
-      setSelectValue($('#srcAutoRefresh'), src.autoRefreshMinutes == null ? 0 : src.autoRefreshMinutes);
-      $('#srcProxy').value = String(src.proxyUrl || '');
-      updateSourceParamsSub();
-    }
-    renderFeedList();
-    renderFeedSelect();
-    srcFormReady = true;
-    scheduleAutoRefresh();   // 间隔刚可能被改过，重启定时器
-  } catch (err) {
-    feedListEl.innerHTML = `<div class="hint" style="padding:20px">读取失败：${escapeHtml(err.message || String(err))}</div>`;
-  }
-}
-
-function feedStatusText(f) {
-  const parts = [`${f.entryCount} 条`];
-  parts.push(f.lastFetchedAt ? fmtDateTime(f.lastFetchedAt) + ' 抓取' : '尚未抓取');
-  parts.push(`每 ${fmtMinutes(f.effectiveRefreshMinutes)}`);
-  if (!f.enabled && f.lastFetchedAt) parts.push('已停采');
-  return parts.join(' · ');
-}
-
-/** 频率选项：与「设置 → 数据源」的全局间隔保持一致的可读写法 */
-const FREQ_OPTIONS = [
-  [5, '每 5 分钟'], [10, '每 10 分钟'], [15, '每 15 分钟'], [20, '每 20 分钟'],
-  [30, '每 30 分钟'], [60, '每 1 小时'], [120, '每 2 小时'], [180, '每 3 小时'],
-  [360, '每 6 小时'], [720, '每 12 小时'], [1440, '每天'],
-];
-
-function fmtMinutes(m) {
-  const n = Number(m);
-  if (!Number.isFinite(n) || n <= 0) return '—';
-  if (n < 60) return `${n} 分钟`;
-  if (n === 60) return '1 小时';
-  if (n < 1440) return `${(n / 60).toFixed(n % 60 ? 1 : 0)} 小时`;
-  return '1 天';
-}
-
-function renderFeedList() {
-  const feeds = state.feedList || [];
-  if (!feeds.length) {
-    feedListEl.innerHTML = '<div class="hint" style="padding:24px 12px">还没有订阅源，在上方粘贴一个 RSS 地址试试</div>';
-    updateSourceSummary();
-    return;
-  }
-
-  // 分组名的候选列表：供每行的分组输入框下拉选择
-  const groupList = $('#groupList');
-  if (groupList) {
-    groupList.innerHTML = (state.feedMeta && state.feedMeta.groups || [])
-      .map((g) => `<option value="${escapeHtml(g)}"></option>`).join('');
-  }
-
-  // 全局抓取间隔：每行的「跟随全局（N 分钟）」要显示真实值
-  const gMins = (state.feedMeta && state.feedMeta.refreshMinutes) || 30;
-
-  const GRIP_SVG = '<svg class="ico drag-grip" aria-hidden="true" focusable="false" viewBox="0 0 16 16"><circle cx="5" cy="3.5" r="1.35"/><circle cx="11" cy="3.5" r="1.35"/><circle cx="5" cy="8" r="1.35"/><circle cx="11" cy="8" r="1.35"/><circle cx="5" cy="12.5" r="1.35"/><circle cx="11" cy="12.5" r="1.35"/></svg>';
-  const rowHtmlFor = (f, order) => {
-    const name = shortFeedName(feedTitle(f));
-    const avatar = f.icon
-      ? `<img class="feed-avatar" src="${escapeHtml(f.icon)}" alt="" loading="lazy">`
-      : `<span class="feed-avatar feed-avatar-txt">${escapeHtml((name || '?').slice(0, 1))}</span>`;
-    const err = f.status === 'error'
-      ? `<span class="err" title="${escapeHtml(f.error || '')}">${icon('alert')} 抓取失败</span>` : '';
-    const cls = [f.enabled ? '' : 'off', f.cardEnabled ? '' : 'no-card'].filter(Boolean).join(' ');
-    return `
-      <div class="feed-row ${cls}" data-id="${escapeHtml(f.id)}">
-        <span class="drag-handle" title="拖动排序：组内重排，或拖到其它分组" aria-label="拖动排序">${GRIP_SVG}</span>
-        <input class="feed-order" type="number" min="1" value="${order}" data-order="${escapeHtml(f.id)}"
-               title="序号：填数字调整在本组内的顺序（与拖拽并存）" aria-label="序号">
-        ${avatar}
-        <div class="feed-info">
-          <div class="feed-title" title="${escapeHtml(feedTitle(f))}">${escapeHtml(name)}</div>
-          <div class="feed-url" title="${escapeHtml(f.url)}">${escapeHtml(prettyUrl(f.url))}</div>
-          <div class="feed-stat">${escapeHtml(feedStatusText(f))} ${err}</div>
-          <div class="feed-metas">
-            <label class="feed-group">
-              <span>分组</span>
-              <input type="text" list="groupList" data-group="${escapeHtml(f.id)}"
-                     value="${escapeHtml(f.groupName || '')}" placeholder="未分组" maxlength="40"
-                     spellcheck="false" autocomplete="off">
-            </label>
-            <label class="feed-group">
-              <span>频率</span>
-              <select class="feed-freq${f.refreshMinutes == null ? '' : ' own'}"
-                      data-freq="${escapeHtml(f.id)}" title="这个频道多久抓一次；未设置则跟随全局">
-                <option value=""${f.refreshMinutes == null ? ' selected' : ''}>跟随全局（${escapeHtml(fmtMinutes(gMins))}）</option>
-                ${FREQ_OPTIONS.map(([v, t]) => `<option value="${v}"${f.refreshMinutes === v ? ' selected' : ''}>${t}</option>`).join('')}
-              </select>
-            </label>
-          </div>
-        </div>
-        <div class="feed-actions">
-          <label class="feed-sw" title="采集：开启后定时抓取这个频道的新条目">
-            <span class="feed-sw-label">采集</span>
-            <span class="switch">
-              <input type="checkbox" data-toggle="${escapeHtml(f.id)}" ${f.enabled ? 'checked' : ''}>
-              <span class="switch-slider"></span>
-            </span>
-          </label>
-          <label class="feed-sw" title="卡片：开启后在「卡片」页展示这个频道的条目">
-            <span class="feed-sw-label">卡片</span>
-            <span class="switch">
-              <input type="checkbox" data-card-toggle="${escapeHtml(f.id)}" ${f.cardEnabled ? 'checked' : ''}>
-              <span class="switch-slider"></span>
-            </span>
-          </label>
-          <button class="feed-icon-btn" data-rename="${escapeHtml(f.id)}" title="重命名">${icon('edit')}</button>
-          <button class="feed-icon-btn" data-refresh="${escapeHtml(f.id)}" title="立即抓取">${icon('refresh')}</button>
-          <button class="feed-icon-btn danger" data-del="${escapeHtml(f.id)}" title="删除该订阅">${icon('trash')}</button>
-        </div>
-      </div>`;
-  };
-
-  feedListEl.innerHTML = groupFeeds(feeds).map((g) => {
-    const isCollapsed = (g.name && state.collapsedGroups.has(g.name));
-    const head = g.name
-      ? `<div class="feed-group-head ${isCollapsed ? 'collapsed' : ''}" data-group="${escapeHtml(g.name)}"><span class="drag-handle" title="拖动排序分组" aria-label="拖动排序分组">${GRIP_SVG}</span><span class="feed-group-caret" aria-hidden="true"></span><span class="feed-group-name">${escapeHtml(g.name)}</span><span class="feed-group-n">${g.feeds.length}</span></div>`
-      : (feeds.some((f) => String(f.groupName || '').trim())
-        ? `<div class="feed-group-head ${isCollapsed ? 'collapsed' : ''}" data-group=""><span class="feed-group-caret" aria-hidden="true"></span><span class="feed-group-name muted">未分组</span><span class="feed-group-n">${g.feeds.length}</span></div>`
-        : '');
-    const rows = isCollapsed ? '' : g.feeds.map((f, i) => rowHtmlFor(f, i + 1)).join('');
-    return head + rows;
-  }).join('');
-
-  updateSourceSummary();
-}
-
-/* ---------------- 拖拽排序（设置-数据源） ----------------
- * Pointer 事件实现，桌面 + 触屏通用，且能被 CDP 模拟（不像 HTML5 DnD 难触发）。
- * - 频道行：拖拽手柄可拖动，组内重排、跨组移动（自动改 groupName）
- * - 分组标题：拖拽手柄可拖动，标题之间重排（落库分组顺序 groupOrder）
- * 落库：频道重排 / 跨组 → /api/feeds/reorder（按组重算 sort_order）；
- *       分组重排 → /api/config（groupOrder）。sort_order 是全局排序轴，组内顺序由它决定。 */
-let dragCtx = null;
-
-feedListEl.addEventListener('pointerdown', (ev) => {
-  const h = ev.target.closest('.drag-handle');
-  if (!h) return;
-  const row = h.closest('.feed-row');
-  const head = h.closest('.feed-group-head');
-  if (row) onDragHandleDown(ev, 'feed', { id: row.getAttribute('data-id') });
-  else if (head) {
-    const g = head.getAttribute('data-group') || '';
-    if (g === '') return;                       // 「未分组」不可拖动（仍可作放置目标）
-    onDragHandleDown(ev, 'group', { group: g });
-  }
-});
-
-function onDragHandleDown(ev, kind, payload) {
-  if (ev.button != null && ev.button !== 0) return;
-  ev.preventDefault();
-  dragCtx = {
-    kind, x0: ev.clientX, y0: ev.clientY, moved: false,
-    id: payload.id, group: payload.group,
-    el: kind === 'feed' ? ev.target.closest('.feed-row') : ev.target.closest('.feed-group-head'),
-  };
-  document.addEventListener('pointermove', onDragMove, { passive: false });
-  document.addEventListener('pointerup', onDragEnd);
-  document.addEventListener('pointercancel', onDragEnd);
-}
-
-function onDragMove(ev) {
-  if (!dragCtx) return;
-  if (!dragCtx.moved) {
-    if (Math.hypot(ev.clientX - dragCtx.x0, ev.clientY - dragCtx.y0) < 6) return;
-    dragCtx.moved = true;
-    document.body.classList.add('is-dragging-feeds');
-  }
-  ev.preventDefault();
-  // 拖动的源元素隐藏命中，便于 elementFromPoint 找到真正的放置目标
-  if (dragCtx.el) dragCtx.el.style.pointerEvents = 'none';
-  const under = document.elementFromPoint(ev.clientX, ev.clientY);
-  if (!under) { dragCtx.target = null; clearDropIndicator(); return; }
-  if (dragCtx.kind === 'feed') {
-    const row = under.closest('.feed-row');
-    const head = under.closest('.feed-group-head');
-    let elm = null, before = true, group = '';
-    if (row && dragCtx.el && !row.contains(dragCtx.el)) {
-      const r = row.getBoundingClientRect();
-      before = ev.clientY < r.top + r.height / 2;
-      elm = row; group = groupOfRow(row);
-    } else if (head && dragCtx.el && !head.contains(dragCtx.el)) {
-      elm = head; group = head.getAttribute('data-group') || ''; before = true;
-    }
-    if (!elm) { dragCtx.target = null; clearDropIndicator(); return; }
-    dragCtx.target = { elm, before, group, type: (head && elm === head) ? 'head' : 'row' };
-    markDrop(elm, before);
-  } else {
-    const head = under.closest('.feed-group-head');
-    let elm = null, before = true;
-    if (head && dragCtx.el && !head.contains(dragCtx.el)) {
-      const r = head.getBoundingClientRect();
-      before = ev.clientY < r.top + r.height / 2;
-      elm = head;
-    }
-    if (!elm) { dragCtx.target = null; clearDropIndicator(); return; }
-    dragCtx.target = { elm, before, group: head.getAttribute('data-group') || '', type: 'group' };
-    markDrop(elm, before);
-  }
-}
-
-function groupOfRow(row) {
-  const id = row.getAttribute('data-id');
-  if (!id) return '';
-  const f = (state.feedList || []).find((x) => String(x.id) === String(id));
-  return f ? (f.groupName || '') : '';
-}
-
-function clearDropIndicator() {
-  feedListEl.querySelectorAll('.drag-over-before, .drag-over-after')
-    .forEach((e) => e.classList.remove('drag-over-before', 'drag-over-after'));
-}
-function markDrop(elm, before) {
-  clearDropIndicator();
-  if (elm) elm.classList.add(before ? 'drag-over-before' : 'drag-over-after');
-}
-
-function onDragEnd() {
-  document.removeEventListener('pointermove', onDragMove);
-  document.removeEventListener('pointerup', onDragEnd);
-  document.removeEventListener('pointercancel', onDragEnd);
-  document.body.classList.remove('is-dragging-feeds');
-  if (dragCtx && dragCtx.el) dragCtx.el.style.pointerEvents = '';
-  clearDropIndicator();
-  const ctx = dragCtx; dragCtx = null;
-  if (!ctx || !ctx.moved || !ctx.target) return;
-  if (ctx.kind === 'feed') applyFeedReorder(ctx);
-  else applyGroupReorder(ctx);
-}
-
-function applyFeedReorder(ctx) {
-  const dragId = ctx.id;
-  const grouped = groupFeeds(state.feedList);
-  for (const g of grouped) {
-    const i = g.feeds.findIndex((f) => String(f.id) === String(dragId));
-    if (i >= 0) { g.feeds.splice(i, 1); break; }
-  }
-  const t = ctx.target;
-  let gi = grouped.findIndex((g) => g.name === t.group);
-  if (gi < 0) { grouped.push({ name: t.group || '', feeds: [] }); gi = grouped.length - 1; }
-  let idx;
-  if (t.type === 'head') idx = 0;
-  else {
-    const tid = t.elm.getAttribute('data-id');
-    idx = grouped[gi].feeds.findIndex((f) => String(f.id) === String(tid));
-    if (idx < 0) idx = grouped[gi].feeds.length;
-    else if (!t.before) idx += 1;
-  }
-  const dragFeed = (state.feedList || []).find((f) => String(f.id) === String(dragId));
-  if (!dragFeed) return;
-  dragFeed.groupName = t.group || '';
-  grouped[gi].feeds.splice(idx, 0, dragFeed);
-  flattenAndRenumber(grouped);
-  renderFeedList();
-  renderReaderChannels();
-  persistReorder();
-}
-
-function applyGroupReorder(ctx) {
-  const order = (state.groupOrder || []).slice();
-  const i = order.indexOf(ctx.group);
-  if (i >= 0) order.splice(i, 1);
-  const t = ctx.target;
-  let j = order.indexOf(t.group);
-  if (j < 0) j = order.length;
-  else if (!t.before) j += 1;
-  order.splice(j, 0, ctx.group);
-  state.groupOrder = order;
-  const grouped = groupFeeds(state.feedList);
-  flattenAndRenumber(grouped);
-  renderFeedList();
-  renderReaderChannels();
-  persistReorder();
-  persistGroupOrder();
-}
-
-// 按 groupOrder 把分组铺平为全局数组（组内保持相对顺序），并给每组重算 sort_order
-function flattenAndRenumber(grouped) {
-  const order = state.groupOrder || [];
-  const seq = [];
-  for (const n of order) { const g = grouped.find((g) => g.name === n); if (g) seq.push(g); }
-  for (const g of grouped) if (!order.includes(g.name)) seq.push(g);
-  const flat = [];
-  let so = 0;
-  for (const g of seq) for (const f of g.feeds) { f.sortOrder = so++; flat.push(f); }
-  state.feedList = flat;
-}
-
-async function persistReorder() {
-  const items = (state.feedList || []).map((f) => ({ id: f.id, sortOrder: f.sortOrder, groupName: f.groupName || '' }));
-  try {
-    await apiFetch('/api/feeds/reorder', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ feeds: items }),
-    });
-  } catch (e) { console.error('保存排序失败', e); if (typeof toast === 'function') toast('排序保存失败'); }
-}
-
-async function persistGroupOrder() {
-  try {
-    // 分组顺序是「每用户」偏好，走 /api/prefs（普通用户也能保存自己的分组顺序）
-    await apiFetch('/api/prefs', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ groupOrder: state.groupOrder }),
-    });
-  } catch (e) { console.error('保存分组顺序失败', e); }
-}
-
-// 手动填序号：把某频道排到所在分组的第 N 位（1 基），与拖拽并存。
-// 只在「本组」内调整顺序；跨组仍用拖拽（拖拽会改 groupName）。
-function applyNumericOrder(id, pos) {
-  if (!Number.isFinite(pos) || pos < 1) { renderFeedList(); return; } // 非法输入：恢复显示
-  const feeds = state.feedList || [];
-  const grouped = groupFeeds(feeds);
-  let src = null;
-  for (const g of grouped) {
-    const i = g.feeds.findIndex((f) => String(f.id) === String(id));
-    if (i >= 0) { src = g; break; }
-  }
-  if (!src) return;
-  const feed = src.feeds.splice(src.feeds.findIndex((f) => String(f.id) === String(id)), 1)[0];
-  const p = Math.min(Math.max(1, Math.floor(pos)), src.feeds.length + 1);
-  src.feeds.splice(p - 1, 0, feed);
-  flattenAndRenumber(grouped);   // 重算全局 sort_order（组内顺序由它决定）
-  renderFeedList();
-  renderReaderChannels();
-  persistReorder();
-}
-
-// 折叠 / 展开分组（状态按账号持久化）
-function toggleGroupCollapse(name) {
-  const set = state.collapsedGroups;
-  if (set.has(name)) set.delete(name); else set.add(name);
-  saveCollapsedGroups(set);
-  renderFeedList();
-}
-
 /** 设置弹层副标题文本（纯计算：React 宿主打开弹层时也要用同一份） */
 function getSettingsSummary() {
   const meta = state.feedMeta || {};
@@ -1281,51 +871,6 @@ function getSettingsSummary() {
 function setSettingsSummary(text) {
   const host = window.__settingsHost;
   if (host && host.setSummary) host.setSummary(text);
-}
-
-function updateSourceSummary() {
-  const meta = state.feedMeta || {};
-  const total = meta.total || 0;
-  const on = meta.enabled || 0;
-  const card = meta.cardEnabled == null ? on : meta.cardEnabled;
-  const groups = (meta.groups || []).length;
-
-  setSettingsSummary(getSettingsSummary());
-
-  const bits = [];
-  bits.push(`<strong>${on}</strong> / ${total} 个频道在定时采集`);
-  bits.push(`<strong>${card}</strong> 个在「卡片」页展示`);
-  if (groups) bits.push(`${groups} 个分组`);
-  settingsHint.innerHTML = total ? bits.join(' · ') : '添加一个 RSS 地址即可开始';
-
-  const tb = $('#feedToolbarHint');
-  if (tb) {
-    const own = (state.feedList || []).filter((f) => f.refreshMinutes != null).length;
-    tb.textContent = total
-      ? `${total} 个频道${groups ? ` · ${groups} 个分组` : ''}`
-        + (own ? ` · ${own} 个单独设了频率` : '')
-        + ' · 改分组或频率后即保存'
-      : '';
-  }
-}
-
-/** 「采集参数」折叠分组的摘要行：收起时也能一眼看到当前值，不用展开 */
-function updateSourceParamsSub() {
-  const el = $('#srcParamsSub');
-  if (!el) return;
-  const keepDays = Number($('#srcKeepDays').value || 0);
-  const keepDaysText = keepDays > 0
-    ? (($('#srcKeepDays').selectedOptions[0] || {}).textContent || `${keepDays} 天`)
-    : '不限时长';
-  const auto = Number($('#srcAutoRefresh').value || 0);
-    const keepN = Number($('#srcKeep').value || 0);
-    const keepNText = keepN > 0 ? `${keepN} 条` : '不限条数';
-    const proxy = String($('#srcProxy').value || '').trim();
-    const proxyText = proxy ? ` · 代理 ${proxy.replace(/\/\/[^@]*@/, '//***@')}` : '';
-    el.textContent = `每 ${fmtMinutes($('#srcRefresh').value)}抓取 · 保留 ${keepNText}`
-    + ` · ${keepDaysText}`
-    + (auto ? ` · 页面刷新 ${fmtMinutes(auto)}` : '')
-    + proxyText;
 }
 
 /* ---------- 账号 ---------- */
@@ -1743,74 +1288,6 @@ $('#statusBody').addEventListener('click', async (ev) => {
   }
 });
 
-/* 采集参数一改就刷新折叠分组的摘要行（收起来也能看到当前值） */
-['#srcRefresh', '#srcKeep', '#srcKeepDays', '#srcAutoRefresh'].forEach((sel) => {
-  const el = $(sel);
-  if (!el) return;
-  el.addEventListener('change', updateSourceParamsSub);
-  if (el.tagName === 'INPUT') el.addEventListener('input', updateSourceParamsSub);
-});
-
-/* ---------- 数据源：添加 / 开关 / 单抓 / 删除 ---------- */
-$('#addFeedBtn').addEventListener('click', async () => {
-  const input = $('#rssUrl');
-  const url = input.value.trim();
-  if (!url) { showResult(feedResult, false, '请先填入 RSS 地址'); input.focus(); return; }
-
-  const btn = $('#addFeedBtn');
-  btn.disabled = true; btn.textContent = '抓取中…';
-  feedResult.className = 'test-result';
-  try {
-    const res = await apiFetch('/api/feeds', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }),
-    });
-    const data = await res.json();
-    if (!res.ok) { showResult(feedResult, false, data.error || '添加失败'); return; }
-    input.value = '';
-    showResult(feedResult, true, `已添加「${shortFeedName(feedTitle(data.feed))}」，新增 ${data.added} 条`);
-    toast('订阅已添加');
-    await loadSourceForm();
-    state.tag = null;
-    await loadPage(true);
-  } catch (err) {
-    showResult(feedResult, false, '添加失败：' + (err.message || err));
-  } finally {
-    btn.disabled = false; btn.textContent = '添加';
-  }
-});
-
-$('#rssUrl').addEventListener('keydown', (ev) => {
-  if (ev.key === 'Enter') { ev.preventDefault(); $('#addFeedBtn').click(); }
-});
-
-/* OPML 导入：读本地文件 → 发给后端解析去重 → 刷新列表 */
-$('#importOpmlBtn').addEventListener('click', () => { $('#opmlFile').click(); });
-$('#opmlFile').addEventListener('change', async (ev) => {
-  const file = ev.target.files && ev.target.files[0];
-  ev.target.value = '';   // 允许重新选择同一文件
-  if (!file) return;
-  const btn = $('#importOpmlBtn');
-  btn.disabled = true; btn.textContent = '导入中…';
-  try {
-    const text = await file.text();
-    const res = await apiFetch('/api/feeds/import', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ opml: text }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || '导入失败');
-    const parts = [`已导入 ${data.added} 个新频道`];
-    if (data.duplicated) parts.push(`跳过 ${data.duplicated} 个重复`);
-    if (data.groups && data.groups.length) parts.push(`${data.groups.length} 个分组`);
-    showResult(feedResult, true, parts.join(' · '));
-    await loadSourceForm();
-  } catch (err) {
-    showResult(feedResult, false, '导入失败：' + (err.message || err));
-  } finally { btn.disabled = false; btn.textContent = '导入 OPML'; }
-});
-
 /* OPML 导出：把当前账号的订阅源整理成标准 OPML（分组作为文件夹），浏览器下载 */
 function exportOpml() {
   const feeds = state.feedList || [];
@@ -1852,234 +1329,6 @@ function exportOpml() {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   toast('已导出 ' + feeds.length + ' 个订阅源');
 }
-const exportOpmlBtn = document.getElementById('exportOpmlBtn');
-if (exportOpmlBtn) exportOpmlBtn.addEventListener('click', exportOpml);
-
-/** 频道行的开关 / 分组改完统一走这里保存，保存后同步刷新各页面的列表 */
-async function patchFeed(id, patch, okMsg) {
-  const res = await apiFetch('/api/feeds/' + id, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(patch),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'HTTP ' + res.status);
-  toast(okMsg);
-  await loadFeeds();
-  state.tag = null;
-  await loadPage(true);
-  renderFeedList();
-  renderReaderChannels();
-}
-
-/** 频道列表里点「重命名」：把标题就地变成输入框，回车/失焦保存，Esc 取消 */
-function startRename(id) {
-  const row = feedListEl.querySelector(`.feed-row[data-id="${CSS.escape(id)}"]`);
-  if (!row) return;
-  const titleEl = row.querySelector('.feed-title');
-  if (!titleEl || titleEl.querySelector('input')) return;
-  const feed = (state.feedList || []).find((f) => f.id === id);
-  const cur = feed ? feedTitle(feed) : '';
-  titleEl.innerHTML = `<input class="feed-title-edit" type="text" maxlength="200" value="${escapeHtml(cur)}" spellcheck="false" autocomplete="off">`;
-  const inp = titleEl.querySelector('input');
-  inp.focus(); inp.select();
-  let done = false;
-  const finish = (commit) => {
-    if (done) return;
-    done = true;
-    if (!commit) { renderFeedList(); return; }
-    const v = inp.value.trim();
-    if (!v || v === cur) { renderFeedList(); return; }
-    patchFeed(id, { title: v }, '名称已更新').catch(() => renderFeedList());
-  };
-  inp.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
-    else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
-  });
-  inp.addEventListener('blur', () => finish(true));
-}
-
-feedListEl.addEventListener('change', async (ev) => {
-  const t = ev.target;
-
-  // 采集开关
-  const cb = t.closest('input[data-toggle]');
-  if (cb) {
-    const id = cb.getAttribute('data-toggle');
-    cb.disabled = true;
-    try {
-      await patchFeed(id, { enabled: cb.checked }, cb.checked ? '已开启采集' : '已停止采集');
-    } catch (err) {
-      cb.checked = !cb.checked;
-      toast('保存失败：' + (err.message || err), false);
-    } finally { cb.disabled = false; }
-    return;
-  }
-
-  // 卡片开关
-  const cc = t.closest('input[data-card-toggle]');
-  if (cc) {
-    const id = cc.getAttribute('data-card-toggle');
-    cc.disabled = true;
-    try {
-      await patchFeed(id, { cardEnabled: cc.checked }, cc.checked ? '已在卡片页展示' : '已从卡片页隐藏');
-    } catch (err) {
-      cc.checked = !cc.checked;
-      toast('保存失败：' + (err.message || err), false);
-    } finally { cc.disabled = false; }
-    return;
-  }
-
-  // 分组名（失焦 / 回车才触发 change）
-  const gi = t.closest('input[data-group]');
-  if (gi) {
-    const id = gi.getAttribute('data-group');
-    const val = gi.value.trim();
-    const feed = (state.feedList || []).find((f) => f.id === id);
-    if (feed && String(feed.groupName || '') === val) return;   // 没变就不发请求
-    gi.disabled = true;
-    try {
-      await patchFeed(id, { groupName: val }, val ? `已归入「${val}」` : '已移出分组');
-    } catch (err) {
-      if (feed) gi.value = feed.groupName || '';
-      toast('保存失败：' + (err.message || err), false);
-      gi.disabled = false;
-    }
-    return;
-  }
-
-  // 抓取频率：空值 = 跟随全局；其余 = 该频道单独设置（分钟）
-  const fq = t.closest('select[data-freq]');
-  if (fq) {
-    const id = fq.getAttribute('data-freq');
-    const feed = (state.feedList || []).find((f) => f.id === id);
-    const next = fq.value === '' ? null : Number(fq.value);
-    if (feed && (feed.refreshMinutes == null ? null : Number(feed.refreshMinutes)) === next) return;
-    fq.disabled = true;
-    try {
-      await patchFeed(id, { refreshMinutes: next },
-        next == null ? '已改为跟随全局频率' : `该频道已设为每 ${fmtMinutes(next)}抓取`);
-    } catch (err) {
-      toast('保存失败：' + (err.message || err), false);
-      fq.disabled = false;
-    }
-  }
-});
-
-feedListEl.addEventListener('click', async (ev) => {
-  // 分组头（非手柄区域）点击 → 折叠 / 展开
-  const gh = ev.target.closest('.feed-group-head');
-  if (gh && !ev.target.closest('.drag-handle')) {
-    toggleGroupCollapse(gh.getAttribute('data-group') || '');
-    return;
-  }
-  const del = ev.target.closest('[data-del]');
-  if (del) {
-    const id = del.getAttribute('data-del');
-    const feed = (state.feedList || []).find((f) => f.id === id);
-    if (!confirm(`确定删除订阅「${feed ? shortFeedName(feedTitle(feed)) : id}」？\n该频道已抓取的条目会一并删除。`)) return;
-    del.disabled = true;
-    try {
-      const res = await apiFetch('/api/feeds/' + id, { method: 'DELETE' });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      toast('订阅已删除');
-      await loadSourceForm();
-      state.tag = null;
-      await loadPage(true);
-    } catch (err) {
-      toast('删除失败：' + (err.message || err), false);
-      del.disabled = false;
-    }
-    return;
-  }
-
-  const rn = ev.target.closest('[data-rename]');
-  if (rn) {
-    startRename(rn.getAttribute('data-rename'));
-    return;
-  }
-
-  const rf = ev.target.closest('[data-refresh]');
-  if (rf) {
-    const id = rf.getAttribute('data-refresh');
-    rf.disabled = true;
-    const old = rf.textContent;
-    rf.textContent = '…';
-    try {
-      const res = await apiFetch('/api/feeds/' + id + '/refresh', { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error((data.result && data.result.error) || '抓取失败');
-      toast(data.result.added ? `新增 ${data.result.added} 条` : '没有新内容');
-      await loadSourceForm();
-      await loadPage(true);
-    } catch (err) {
-      toast('抓取失败：' + (err.message || err), false);
-    } finally {
-      rf.disabled = false;
-      rf.textContent = old;
-    }
-  }
-});
-
-// 手动填序号：input 失焦 / 回车时触发
-feedListEl.addEventListener('change', (ev) => {
-  const oi = ev.target.closest('[data-order]');
-  if (oi) { applyNumericOrder(oi.getAttribute('data-order'), parseInt(oi.value, 10)); }
-});
-
-$('#refreshAllFeedsBtn').addEventListener('click', async () => {
-  const btn = $('#refreshAllFeedsBtn');
-  btn.disabled = true; btn.textContent = '抓取中…';
-  try {
-    const res = await apiFetch('/api/feeds/refresh', { method: 'POST' });
-    const data = await res.json();
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const failed = (data.failed || []).length;
-    showResult(feedResult, !failed, failed
-      ? `抓取完成，新增 ${data.added} 条，${failed} 个频道失败`
-      : `抓取完成，新增 ${data.added} 条`);
-    await loadSourceForm();
-    state.tag = null;
-    await loadPage(true);
-  } catch (err) {
-    showResult(feedResult, false, '抓取失败：' + (err.message || err));
-  } finally {
-    btn.disabled = false; btn.textContent = '刷新全部';
-  }
-});
-
-$('#saveSourceBtn').addEventListener('click', async () => {
-  if (!srcFormReady) { showResult(feedResult, false, '设置尚未加载完成，请稍后再试'); return; }
-  const btn = $('#saveSourceBtn');
-  btn.disabled = true; btn.textContent = '保存中…';
-  try {
-    const res = await apiFetch('/api/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        source: {
-          refreshMinutes: $('#srcRefresh').value,
-          keepPerFeed: $('#srcKeep').value,
-          keepDays: $('#srcKeepDays').value,
-          timeoutSeconds: $('#srcTimeout').value,
-          concurrency: $('#srcConcurrency').value,
-          autoRefreshMinutes: $('#srcAutoRefresh').value,
-          proxyUrl: $('#srcProxy').value,
-        },
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) { showResult(feedResult, false, data.error || '保存失败'); return; }
-    showResult(feedResult, true, '抓取设置已保存');
-    toast('抓取设置已保存');
-    scheduleAutoRefresh();   // 立刻按新的「页面自动刷新」间隔重排
-  } catch (err) {
-    showResult(feedResult, false, '保存失败：' + (err.message || err));
-  } finally {
-    btn.disabled = false; btn.textContent = '保存设置';
-  }
-});
-
 /* 账号：保存 */
 $('#saveAccBtn').addEventListener('click', async () => {
   const btn = $('#saveAccBtn');
@@ -4164,6 +3413,8 @@ async function cardSetFlag(id, patch) {
  *   focusSearchBox / exportOpml / shortFeedName / feedTitle
  *   prefersReducedMotion / THEME_MODES / THEME_META
  *   refresh / scrollTop    常用操作的小包装
+ *   loadFeeds / loadPage / renderFeedSelect / renderReaderChannels / scheduleAutoRefresh
+ *   setLayout / setSettingsSummary / bindSections / groupFeeds   P2c 数据源面板
  * 注意：必须在文件末尾建立，上游 const（THEME_MODES 等）此时已初始化。
  * 待视图与设置全部 React 化、旧 app.js 退役后，此桥一并拆除。
  * ============================================================ */
@@ -4179,4 +3430,8 @@ window.shiyue = {
   lockPageScroll, unlockPageScroll, stopStatusPolling,
   settingsTabEffect, getLegacySettingsPane, getSettingsSummary,
   getAppearance: readAppearance, setAppearance, resetAppearance,
+  // —— v1.5.0 起数据源面板 React 化（P2c，组件见 src/settings/SourcePane.jsx） ——
+  loadFeeds, loadPage, renderFeedSelect, renderReaderChannels,
+  scheduleAutoRefresh, setLayout, setSettingsSummary,
+  bindSections, groupFeeds,
 };
