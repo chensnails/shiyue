@@ -94,34 +94,7 @@ async function apiFetch(url, opts) {
     location.replace('/login.html?next=' + encodeURIComponent(location.pathname + location.search));
     throw new Error('未登录');
   }
-  checkAppBuild(res);
   return res;
-}
-
-/* 部署新版本后，已经打开的旧标签页不会自动拿到新代码（SPA 不刷新就是旧 JS），
-   曾导致「明明修了、页面还是老样子」。服务端在每次 API 响应头里带 X-App-Build
-   （容器重建即变），这里发现与本地记录不一致就弹一条可点击的提示条，用户点了才刷新 —— 不强制打断阅读。 */
-function checkAppBuild(res) {
-  try {
-    const v = res.headers.get('X-App-Build');
-    if (!v) return;
-    const KEY = 'shiyue.appBuild.v1';
-    const prev = localStorage.getItem(KEY);
-    if (prev === v) return;
-    localStorage.setItem(KEY, v);
-    if (prev === null) return; // 首次访问只记基线，不提示
-    showUpdateBar();
-  } catch (_) { /* localStorage 不可用等，静默忽略 */ }
-}
-
-function showUpdateBar() {
-  if (document.getElementById('updBar')) return;
-  const bar = document.createElement('button');
-  bar.id = 'updBar';
-  bar.type = 'button';
-  bar.textContent = '新版本已发布，点此刷新生效';
-  bar.addEventListener('click', () => location.reload());
-  document.body.appendChild(bar);
 }
 
 /** 完整时间戳，用于 title 提示与展开体的发布时间 */

@@ -56,7 +56,7 @@ cd <项目目录>
 - 前端已接入 **Vite 构建**（入口 `index.html` / `login.html` 在仓库根，React 源码在 `src/`）：任何改动都要 `docker compose up -d --build` 重建镜像才生效（ARM 服务器约 +30~60s）。**三大视图（文章 / 卡片 / AI）、设置弹层六面板与 App Shell 顶栏均已 React 化**，旧 `public/app.js` 现主要承担逻辑 / 状态与残留胶水。
 - 本地纯前端联调：`npm ci && npm run dev`（Vite 5173，`/api` 代理到本地 3000 的后端）。
 - **UI 回归测试**：`npm ci && npm run test:ui`（jsdom 中挂载真实 React 组件，覆盖设置弹层六面板 / AI 视图 / 卡片视图，160+ 断言）。
-- 部署后旧页面会提示「新版本已发布」，点一下即刷新。
+- 部署后端与前端一起重建；页面本身不主动提示更新（如需拿到新代码，请手动刷新）。
 
 ## 在手机上用（PWA）
 

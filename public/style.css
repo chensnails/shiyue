@@ -2686,24 +2686,6 @@ body { padding-bottom: env(safe-area-inset-bottom, 0px); }
  * 「有新内容」浮标（网页自动刷新）
  * 用户已经滚下去了就不动列表，先挂这个；点它才套用并回到顶部
  * ============================================================ */
-/* 新版本更新提示条：检测到服务端构建号变化时出现，点击整条刷新 */
-.updBar {
-  position: fixed;
-  top: calc(var(--topbar-h, 56px) + 10px);
-  left: 50%;
-  transform: translateX(-50%);
-  display: inline-flex; align-items: center; gap: 7px;
-  padding: 9px 18px;
-  border: 0;
-  border-radius: 999px;
-  background: var(--accent); color: var(--on-accent);
-  font-size: 0.8125rem; font-weight: 600; font-family: inherit;
-  box-shadow: var(--shadow-hover);
-  cursor: pointer;
-  z-index: 210;
-  animation: newPillIn .22s ease-out forwards;
-}
-
 .new-pill {
   position: fixed;
   left: 50%; bottom: calc(92px + env(safe-area-inset-bottom, 0px));

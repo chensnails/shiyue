@@ -1,6 +1,6 @@
 {
   "name": "shiyue",
-  "version": "1.10.0",
+  "version": "1.10.1",
   "private": true,
   "description": "拾阅（shiyue）—— RSS 驱动的资源卡片站与每日 AI 简报，数据存 PostgreSQL",
   "main": "server.js",

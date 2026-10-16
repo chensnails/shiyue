@@ -678,14 +678,9 @@ function parseOpml(text) {
   return feeds;
 }
 
-// 构建标识：容器每次重建启动都变。SPA 旧标签页不会自动拿到新代码，
-// 靠 API 响应头把它带给前端，前端发现变化就提示「点此刷新」。
-const APP_BUILD = Date.now().toString(36);
-
 const json = (res, code, obj) => {
   res.writeHead(code, {
     'Content-Type': 'application/json; charset=utf-8',
-    'X-App-Build': APP_BUILD,
   });
   res.end(JSON.stringify(obj));
 };
