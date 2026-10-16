@@ -869,6 +869,64 @@ const dbRequired = (res) => {
   return true;
 };
 
+/* ---------- 关于 / 版本检测 ----------
+ * 当前版本取自 package.json；「检查更新」向 GitHub 查最新 Release，
+ * 没有发布 Release 时退回 tags 列表；结果全站缓存 10 分钟，避免频繁命中
+ * GitHub 未认证限流（每小时 60 次/IP）。不需要数据库，放在登录闸门之后单独处理。 */
+const GITHUB_REPO = process.env.GITHUB_REPO || 'chensnails/shiyue';
+const VERSION_CHECK_TTL = 10 * 60 * 1000;
+let versionCheckCache = { at: 0, data: null };
+
+/** 语义化版本比较：a 比 b 新返回 1，相同 0，旧 -1 */
+function compareVersion(a, b) {
+  const pa = String(a || '0').replace(/^v/i, '').split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = String(b || '0').replace(/^v/i, '').split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return d > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+async function fetchGithubLatest() {
+  const headers = { 'User-Agent': 'shiyue-version-check', Accept: 'application/vnd.github+json' };
+  if (process.env.GITHUB_TOKEN) headers.Authorization = 'Bearer ' + process.env.GITHUB_TOKEN;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 6000);
+  try {
+    const relRes = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, { headers, signal: ctrl.signal });
+    if (relRes.ok) {
+      const rel = await relRes.json();
+      if (rel && rel.tag_name) {
+        return {
+          latest: String(rel.tag_name).replace(/^v/i, ''),
+          releaseUrl: rel.html_url || null,
+          name: rel.name || null,
+          publishedAt: rel.published_at || null,
+          source: 'release',
+        };
+      }
+    }
+    const tagRes = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/tags`, { headers, signal: ctrl.signal });
+    if (tagRes.ok) {
+      const tags = await tagRes.json();
+      if (Array.isArray(tags) && tags.length && tags[0].name) {
+        const latest = String(tags[0].name).replace(/^v/i, '');
+        return {
+          latest,
+          releaseUrl: `https://github.com/${GITHUB_REPO}/releases/tag/v${latest}`,
+          name: null,
+          publishedAt: null,
+          source: 'tag',
+        };
+      }
+    }
+    throw new Error('GitHub 上还没有任何发布');
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const { pathname, searchParams } = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const ip = req.socket.remoteAddress || 'unknown';
@@ -924,6 +982,40 @@ const server = http.createServer(async (req, res) => {
       if (!user) { json(res, 401, { error: 'unauthorized' }); return; }
       if (!isAdmin(user)) { json(res, 403, { error: '需要管理员权限' }); return; }
       json(res, 200, await buildStatus());
+      return;
+    }
+
+    /* ---------- 关于 / 版本（所有登录用户，不依赖数据库）---------- */
+    if (pathname === '/api/version' && req.method === 'GET') {
+      if (!user) { json(res, 401, { error: 'unauthorized' }); return; }
+      json(res, 200, { version: pkg.version, repo: GITHUB_REPO });
+      return;
+    }
+
+    if (pathname === '/api/version/check' && req.method === 'POST') {
+      if (!user) { json(res, 401, { error: 'unauthorized' }); return; }
+      const now = Date.now();
+      if (versionCheckCache.data && now - versionCheckCache.at < VERSION_CHECK_TTL) {
+        json(res, 200, versionCheckCache.data);
+        return;
+      }
+      try {
+        const info = await fetchGithubLatest();
+        const result = {
+          ok: true,
+          current: pkg.version,
+          latest: info.latest,
+          hasUpdate: compareVersion(info.latest, pkg.version) > 0,
+          releaseUrl: info.releaseUrl,
+          name: info.name || null,
+          publishedAt: info.publishedAt || null,
+          source: info.source,
+        };
+        versionCheckCache = { at: now, data: result };
+        json(res, 200, result);
+      } catch (e) {
+        json(res, 200, { ok: false, error: String((e && e.message) || e) });
+      }
       return;
     }
 

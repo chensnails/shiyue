@@ -826,6 +826,7 @@ function switchTab(name) {
   $$('.tab-pane').forEach((p) => { p.hidden = p.getAttribute('data-pane') !== name; });
   if (name === 'source') loadSourceForm();
   if (name === 'model') loadModelForm();
+  if (name === 'about') loadAboutPage();
   // 「日报」已经不是这里的 tab 了，搬去「AI → 日报设置」子页
   if (name === 'account') loadAccountForm();
   // 状态页是唯一会自己轮询的页面，切走就停，别在后台空转
@@ -1560,6 +1561,53 @@ function stopStatusPolling() {
   if (statusPoll) { clearInterval(statusPoll); statusPoll = null; }
   if (statusTick) { clearInterval(statusTick); statusTick = null; }
 }
+
+/* ---------- 关于（版本信息与更新检测） ---------- */
+async function loadAboutPage() {
+  const el = $('#aboutVersion');
+  try {
+    const res = await apiFetch('/api/version');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const d = await res.json();
+    if (el) el.textContent = 'v' + (d.version || '—');
+  } catch (err) {
+    if (el) el.textContent = '读取失败';
+  }
+  // 每次进入先清掉上一次的检测结果，避免留着过期信息
+  const r = $('#aboutCheckResult');
+  if (r) { r.className = 'test-result'; r.innerHTML = ''; }
+}
+
+$('#aboutCheckBtn').addEventListener('click', async () => {
+  const btn = $('#aboutCheckBtn');
+  const r = $('#aboutCheckResult');
+  btn.disabled = true;
+  const oldText = btn.textContent;
+  btn.textContent = '检测中…';
+  if (r) { r.className = 'test-result'; r.innerHTML = ''; }
+  try {
+    const res = await apiFetch('/api/version/check', { method: 'POST' });
+    const d = await res.json().catch(() => ({}));
+    if (!d.ok) throw new Error(d.error || ('HTTP ' + res.status));
+    if (d.hasUpdate) {
+      const link = d.releaseUrl
+        ? ` · <a href="${escapeHtml(d.releaseUrl)}" target="_blank" rel="noopener">查看发布</a>`
+        : '';
+      if (r) {
+        r.className = 'test-result show upd';
+        r.innerHTML = `发现新版本 <b>v${escapeHtml(d.latest)}</b>（当前 v${escapeHtml(d.current)}）${link}`;
+      }
+    } else if (r) {
+      r.className = 'test-result show ok';
+      r.textContent = `已是最新版本（v${d.current}）`;
+    }
+  } catch (err) {
+    showResult(r, false, '检测失败：' + String(err.message || err));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = oldText;
+  }
+});
 
 /** 把快照拍平成纯文本，方便贴到 issue / 聊天里 */
 function buildDiagnostics(d) {

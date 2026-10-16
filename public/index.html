@@ -345,6 +345,7 @@
       <button class="tab" data-tab="account">账号</button>
       <button class="tab" data-tab="appearance">外观</button>
       <button class="tab" data-tab="status">状态</button>
+      <button class="tab" data-tab="about">关于</button>
     </div>
 
     <div class="modal-body">
@@ -700,6 +701,38 @@
             <button class="btn btn-ghost" id="statusCopyBtn">复制诊断</button>
             <button class="btn btn-primary" id="statusRefreshBtn">刷新</button>
           </div>
+        </div>
+      </section>
+
+      <!-- 关于：版本信息与更新检测 -->
+      <section class="tab-pane" data-pane="about" hidden>
+        <div class="about-body pane-scroll">
+          <div class="about-brand">
+            <img class="about-logo" src="/favicon.svg" alt="拾阅" width="56" height="56">
+            <div class="about-brand-txt">
+              <h3 class="about-name">拾阅 <span class="about-en">shiyue</span></h3>
+              <p class="about-slogan">拾取值得读的 —— 自托管 RSS 阅读器 · 卡片墙 · 每日 AI 简报</p>
+            </div>
+          </div>
+          <dl class="about-kv">
+            <div class="about-kv-row">
+              <dt>当前版本</dt>
+              <dd id="aboutVersion">读取中…</dd>
+            </div>
+            <div class="about-kv-row">
+              <dt>仓库地址</dt>
+              <dd><a href="https://github.com/chensnails/shiyue" target="_blank" rel="noopener">github.com/chensnails/shiyue</a></dd>
+            </div>
+            <div class="about-kv-row">
+              <dt>开源许可</dt>
+              <dd>MIT</dd>
+            </div>
+          </dl>
+          <div class="about-check">
+            <button class="btn btn-primary" id="aboutCheckBtn" type="button">检查更新</button>
+          </div>
+          <div class="test-result" id="aboutCheckResult" role="status"></div>
+          <p class="about-note">版本检测会向 GitHub 查询最新的 Release / Tag（结果缓存 10 分钟，不会频繁请求）。</p>
         </div>
       </section>
 

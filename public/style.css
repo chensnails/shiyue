@@ -2929,3 +2929,29 @@ textarea:focus-visible,
 .viewmode-btn:focus-visible,
 .ainav-btn:focus-visible,
 .tab:focus-visible { outline: none; }
+
+/* ---------- 关于页（版本信息与更新检测） ---------- */
+.about-body { padding: 20px 22px 24px; }
+.about-brand { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
+.about-logo { border-radius: 14px; flex: none; }
+.about-name { font-size: 1.125rem; line-height: 1.3; margin: 0 0 3px; }
+.about-en { font-size: 0.75rem; font-weight: 400; color: var(--text-faint); margin-left: 3px; letter-spacing: 0.02em; }
+.about-slogan { margin: 0; font-size: 0.7813rem; color: var(--text-muted); line-height: 1.5; }
+.about-kv { margin: 0 0 20px; }
+.about-kv-row { display: flex; align-items: baseline; justify-content: space-between; gap: 18px; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 0.8125rem; }
+.about-kv-row:last-child { border-bottom: 0; }
+.about-kv dt { color: var(--text-faint); flex: none; }
+.about-kv dd { margin: 0; text-align: right; min-width: 0; word-break: break-all; }
+.about-kv dd a { color: var(--accent); }
+.about-check { margin-bottom: 14px; }
+.about-body > .test-result { margin-bottom: 14px; }
+.about-note { margin: 0; font-size: 0.7188rem; color: var(--text-faint); line-height: 1.7; }
+/* 「有新版本」用主色调高亮，和绿色（已最新）／红色（失败）区分 */
+.test-result.upd { background: var(--accent-soft); border: 1px solid var(--accent); color: var(--text); }
+.test-result.upd b { font-variant-numeric: tabular-nums; }
+.test-result.upd a { color: var(--accent); text-decoration: underline; }
+@media (max-width: 640px) {
+  .about-body { padding: 16px 16px 20px; }
+  .about-kv-row { flex-direction: column; gap: 2px; }
+  .about-kv dd { text-align: left; }
+}
