@@ -12,6 +12,8 @@
  * loadFeeds / cardsLoad 桩复刻 app.js 桥写共享 state 的语义。
  * 拖拽路径用 monkey-patch 的 document.elementFromPoint + 元素级 getBoundingClientRect。 */
 const { JSDOM } = require('jsdom');
+const fs = require('fs');
+const path = require('path');
 
 const dom = new JSDOM('<!DOCTYPE html><html><body>' +
   '<div id="settingsRoot"></div>' +
@@ -601,6 +603,22 @@ const withEFP = (el, fn) => {
   await sleep(60);
   const results = [];
   const t = (name, fn) => { try { fn(); results.push(['PASS', name]); } catch (e) { results.push(['FAIL', name + ' —— ' + e.message]); } };
+
+  // ============ index.html 挂载点（防「手术误删挂载点」回归） ============
+  // 背景：v1.7.0 迁移 AI 视图时，替换区间跨过了 #settingsRoot，导致设置弹层不再挂载、
+  // 设置按钮失效（直到 v1.8.2 才发现）。这里把四个挂载点钉死。
+  const indexHtml = fs.readFileSync(path.join(__dirname, '..', '..', 'index.html'), 'utf8');
+  t('index.html：四个 React 挂载点齐全', () => {
+    for (const id of ['settingsRoot', 'cmdkRoot', 'aiRoot', 'cardsRoot']) {
+      if (indexHtml.indexOf('id="' + id + '"') < 0) throw new Error('缺 #' + id);
+    }
+  });
+  t('index.html：入口脚本各引用一次', () => {
+    const appRefs = (indexHtml.match(/src="\/app\.js"/g) || []).length;
+    const modRefs = (indexHtml.match(/src="\/src\/main\.jsx"/g) || []).length;
+    if (appRefs !== 1) throw new Error('/app.js 引用 ' + appRefs + ' 次');
+    if (modRefs !== 1) throw new Error('/src/main.jsx 引用 ' + modRefs + ' 次');
+  });
 
   // ============ 外壳与宿主 ============
   t('初始：遮罩常驻但 hidden', () => { const m = mask(); if (!m) throw new Error('无遮罩'); if (m.hidden !== true) throw new Error('初始应隐藏'); });
