@@ -766,46 +766,23 @@ function renderSkeletons(n = 8) {
 // 设置弹层自 v1.3.0 起外壳 React 化（挂载点 #settingsRoot，组件见 src/settings/）：
 // 开合状态由 React 组件同步到 window.__settingsOpen，旧 #settingsMask / #settingsSummary
 // DOM 已移除；openSettings / closeSettings 委托给 React 宿主 window.__settingsHost。
-const accResult = $('#accResult');
 
 /* 管理员专属的 tab（状态）；模型配置每用户独立，普通用户也能配 */
 const ADMIN_TABS = ['status'];
 const isAdmin = () => state.role === 'admin';
 
-/** 按角色显隐设置里管理员专属的部分：状态 tab（React 外壳过滤）、用户管理、日报设置；
- *  采集参数与「保存设置」按钮自 v1.5.0 起在 React 数据源面板内按 admin 显隐 */
+/** 按角色显隐设置里管理员专属的部分：状态 tab（React 外壳过滤）、日报设置；
+ *  采集参数与「保存设置」按钮自 v1.5.0 起在 React 数据源面板内按 admin 显隐；
+ *  用户管理自 v1.6.0 起在 React 账号面板内按 admin 显隐 */
 function applyRoleUI() {
   const admin = isAdmin();
   // 设置弹层 tab 已 React 化：按角色过滤交给宿主（管理员专属 tab 由外壳不再渲染）
   const host = window.__settingsHost;
   if (host && host.setAdminFlag) host.setAdminFlag(admin);
-  const usersSec = $('#accUsersSec');
-  if (usersSec) usersSec.hidden = !admin;            // 用户管理仅管理员
   const aiSettings = document.querySelector('#aiNav [data-ai="settings"]');
   if (aiSettings) aiSettings.hidden = !admin;        // 日报设置是全局设置
   // 普通用户若正停在管理员子页（如深链 #ai/settings），退回默认子页
   if (!admin && aiPage === 'settings') switchAiPage('digest');
-}
-
-/** 设置弹层 tab 切换的副作用（v1.3.0 起由 React 外壳在打开 / 切 tab 时经桥调用）。
- *  tab 高亮与面板显隐由 React 层管理（legacy 面板搬入 / 还回插槽），这里只加载
- *  对应表单并启停状态轮询；显隐循环做了 legacy 容器兜底，防止节点遗落在错误状态。 */
-function settingsTabEffect(name) {
-  if (!isAdmin() && ADMIN_TABS.indexOf(name) >= 0) name = 'source';   // 普通用户看不到这些 tab
-  $$('#legacyPanes .tab-pane, .tab-pane-legacy .tab-pane').forEach((p) => {
-    p.hidden = p.getAttribute('data-pane') !== name;
-  });
-  // 「日报」已经不是这里的 tab 了，搬去「AI → 日报设置」子页
-  if (name === 'account') loadAccountForm();
-  // source / appearance / model / about 已 React 化，随面板挂载自行加载，无旧 loader
-  // 状态页是唯一会自己轮询的页面，切走就停，别在后台空转
-  if (name === 'status') { loadStatusForm(); startStatusPolling(); } else stopStatusPolling();
-}
-
-/** legacy 设置面板查询（React 外壳搬运用）：面板只存在于 #legacyPanes 隐藏容器
- *  或弹层内的 .tab-pane-legacy 插槽，全局查找两个位置都能命中 */
-function getLegacySettingsPane(tab) {
-  return document.querySelector('[data-pane="' + tab + '"]');
 }
 
 /* ---------- 弹层打开时锁住背景页面 ----------
@@ -873,313 +850,6 @@ function setSettingsSummary(text) {
   if (host && host.setSummary) host.setSummary(text);
 }
 
-/* ---------- 账号 ---------- */
-/** 「登录信息」折叠分组的摘要行 */
-function updateAccountSub() {
-  const el = $('#accSub');
-  if (el) el.textContent = state.username ? `当前用户 ${state.username}` : '';
-}
-
-async function loadAccountForm() {
-  // 用户名/角色在启动时已从 /api/session 拿到，不必再打 /api/config（那个现在是管理员专属）
-  $('#accUsername').value = state.username || '';
-  $('#accCurrent').value = '';
-  $('#accNew').value = '';
-  accResult.className = 'test-result';
-  updateAccountSub();
-  if (isAdmin()) loadUserList();
-}
-
-/* ============================================================
- * 状态（只读体检页）
- * 数据来自 GET /api/status 的一次快照；页面停留时每 30s 拉一次，
- * 「已运行时长」在本地每秒递增，不必等服务端。
- * ============================================================ */
-let statusData = null;        // 最近一次快照，供「复制诊断」用
-let statusPoll = null;        // 30s 轮询
-let statusTick = null;        // 1s 本地递增运行时长
-let statusUptimeBase = null;  // { sec, at } 用于推算当前 uptime
-
-/** 秒 → 粗粒度时长：3 天 4 小时 / 2 小时 5 分 / 42 秒 */
-function fmtDuration(sec) {
-  const s = Math.max(0, Math.round(Number(sec) || 0));
-  const d = Math.floor(s / 86400);
-  const h = Math.floor((s % 86400) / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  if (d) return `${d} 天 ${h} 小时`;
-  if (h) return `${h} 小时 ${m} 分`;
-  if (m) return `${m} 分 ${s % 60} 秒`;
-  return `${s} 秒`;
-}
-
-/** 字节 → MB / GB */
-function fmtBytes(n) {
-  const b = Number(n);
-  if (!Number.isFinite(b) || b <= 0) return '—';
-  const mb = b / 1048576;
-  if (mb >= 1024) return (mb / 1024).toFixed(2) + ' GB';
-  return mb.toFixed(mb >= 100 ? 0 : 1) + ' MB';
-}
-
-/** 相对时间。dir='past' → 「12 分钟前」；dir='future' → 「约 12 分钟后」 */
-function fmtRel(ts, dir) {
-  if (!ts) return '';
-  const diff = dir === 'future'
-    ? new Date(ts).getTime() - Date.now()
-    : Date.now() - new Date(ts).getTime();
-  const s = Math.abs(Math.round(diff / 1000));
-  let txt;
-  if (s < 60) txt = `${s} 秒`;
-  else if (s < 3600) txt = `${Math.round(s / 60)} 分钟`;
-  else if (s < 86400) txt = `${Math.round(s / 3600)} 小时`;
-  else txt = `${Math.round(s / 86400)} 天`;
-  return dir === 'future' ? `约 ${txt}后` : `${txt}前`;
-}
-
-const numFmt = new Intl.NumberFormat('zh-CN');
-const fmtNum = (n) => numFmt.format(Number(n) || 0);
-
-/** 一张小指标卡（value 允许放 HTML） */
-const statCard = (label, value, sub) => `
-  <div class="stat-card">
-    <p class="stat-label">${escapeHtml(label)}</p>
-    <p class="stat-value">${value}</p>
-    ${sub ? `<p class="stat-sub">${escapeHtml(sub)}</p>` : ''}
-  </div>`;
-
-/** 一行「键 → 值」，键转义、值放 HTML */
-const statRow = (k, v) => `<div class="stat-row"><span class="stat-k">${escapeHtml(k)}</span><span class="stat-v">${v}</span></div>`;
-
-/** 状态页的一个折叠分组。open 只是首次的默认值，用户改过之后以记住的状态为准 */
-const statSection = (key, title, sub, open, inner) => `
-  <details class="sec" data-sec="${key}"${open ? ' open' : ''}>
-    <summary class="sec-head">
-      <svg class="sec-arrow" aria-hidden="true" focusable="false"><use href="#i-chevron-right"/></svg>
-      <span class="sec-title">${escapeHtml(title)}</span>
-      <span class="sec-sub">${escapeHtml(sub)}</span>
-    </summary>
-    <div class="sec-body">${inner}</div>
-  </details>`;
-
-function renderStatus(d) {
-  const body = $('#statusBody');
-  if (!body) return;
-
-  const app = d.app || {};
-  const db = d.db || {};
-  const rss = d.rss || {};
-  const dg = d.digest || {};
-  const f = rss.feeds || {};
-  const e = rss.entries || {};
-  const last = rss.lastResult;
-  const problems = rss.problems || [];
-  const mem = app.memory || {};
-  const ctn = app.container;
-
-  const dbOk = !!db.ready;
-  const hasErr = (f.error || 0) > 0;
-  const rssState = !dbOk ? 'bad' : (hasErr ? 'warn' : 'ok');
-  const headline = !dbOk
-    ? '数据库未就绪' + (db.error ? '：' + db.error : '')
-    : (hasErr ? `${f.error} 个频道抓取失败` : '运行正常');
-
-  statusUptimeBase = { sec: Number(app.uptimeSec) || 0, at: Date.now() };
-
-  const out = [];
-
-  /* ---- 健康条：常显 ----
-     顶上这一条已经回答了「是否正常」，所以下面的分组默认全收起，
-     想深挖哪个再展开 —— 每个分组的标题右侧都带着关键数字，不展开也知道大概。 */
-  out.push(`<div class="stat-health">
-    <span class="stat-pill"><i class="stat-dot ok"></i>服务</span>
-    <span class="stat-pill"><i class="stat-dot ${dbOk ? 'ok' : 'bad'}"></i>数据库</span>
-    <span class="stat-pill"><i class="stat-dot ${rssState}"></i>抓取</span>
-    <span class="stat-health-msg${dbOk && !hasErr ? '' : ' warn'}">${escapeHtml(headline)}</span>
-  </div>`);
-
-  /* ---- 运行实例 + 数据库 ---- */
-  // 容器内存取 cgroup 口径（和 docker stats 一致）；进程 RSS 只作对照放副行。
-  // 两者不等是正常的：RSS 含共享库等重复计入的页，容器 cgroup 只算真正记在它账上的页。
-  const load = app.loadavg || [];
-  const cpuPct = ctn && ctn.cpuPercent != null ? ctn.cpuPercent + '%' : null;
-  const memUsed = ctn && ctn.memoryUsed ? ctn.memoryUsed : mem.rss;
-
-  out.push(statSection('st-runtime', '运行与数据库',
-    `${fmtDuration(app.uptimeSec)} · 内存 ${fmtBytes(memUsed)}`
-      + ` · 数据库 ${dbOk ? db.latencyMs + ' ms' : '未就绪'}`,
-    false,
-    `<h3 class="stat-h">运行实例</h3><div class="stat-grid">
-      ${statCard('已运行', `<span id="statUptime">${fmtDuration(app.uptimeSec)}</span>`,
-      app.startedAt ? '启动于 ' + fmtFull(app.startedAt) : '')}
-      ${statCard(ctn && ctn.memoryUsed ? '容器内存' : '内存占用', fmtBytes(memUsed),
-      ctn && ctn.memoryUsed
-        ? `进程 RSS ${fmtBytes(mem.rss)}${ctn.memoryLimit ? ' · 上限 ' + fmtBytes(ctn.memoryLimit) : ''}`
-        : `堆 ${fmtBytes(mem.heapUsed)}`)}
-      ${statCard('Node', escapeHtml(String(app.node || '—')),
-      `应用 v${escapeHtml(String(app.version || '—'))} · PID ${escapeHtml(String(app.pid || '—'))}`)}
-      ${statCard('系统负载', escapeHtml(String(load[0] != null ? load[0] : '—')),
-      `${cpuPct ? '容器 CPU ' + cpuPct + ' · ' : ''}${app.cpuCount || '—'} 核`)}
-    </div>
-    <h3 class="stat-h">数据库</h3><div class="stat-grid">
-      ${statCard('状态', dbOk ? '已连接' : '未就绪',
-      dbOk ? `往返 ${db.latencyMs} ms` : (db.error || ''))}
-      ${statCard('连接池', db.pool ? `${db.pool.total} / ${db.pool.max}` : '—',
-      db.pool ? `空闲 ${db.pool.idle} · 等待 ${db.pool.waiting}` : '')}
-      ${statCard('条目总数', fmtNum(db.tables && db.tables.entries), `近 24h 新增 ${fmtNum(e.added24h)}`)}
-      ${statCard('日报存档', fmtNum(db.tables && db.tables.digests), dg.oldestDate ? `最早 ${dg.oldestDate}` : '')}
-    </div>`));
-
-  /* ---- RSS 采集 ---- */
-  const lastLine = last
-    ? `${fmtFull(rss.lastRefreshAt)} · 新增 ${last.added} 条 · 耗时 ${(last.durationMs / 1000).toFixed(1)}s`
-      + (last.failed ? ` · 失败 ${last.failed} 个` : '')
-      + (last.pruned ? ` · 清理 ${last.pruned} 条` : '')
-      + (last.skipped ? ` · 跳过 ${last.skipped} 个` : '')
-    : '尚未抓取';
-
-  out.push(statSection('st-collect', '采集与条目',
-    `${f.total} 个频道 · ${fmtNum(e.total)} 条 · 未读 ${fmtNum(e.unread)} · 收藏 ${fmtNum(e.favorite)}`,
-    false,
-    `<div class="stat-list">
-      ${statRow('抓取间隔', `全局每 ${rss.refreshMinutes} 分钟`
-      + (f.perFeedInterval ? ` · ${f.perFeedInterval} 个频道单独设置` : ' · 全部跟随全局')
-      + ` · 并发 ${rss.concurrency} · 超时 ${rss.timeoutSeconds}s`)}
-      ${statRow('上次抓取', escapeHtml(lastLine))}
-      ${statRow('下次抓取', rss.nextRefreshAt
-      ? `${fmtFull(rss.nextRefreshAt)} <span class="stat-muted">（${fmtRel(rss.nextRefreshAt, 'future')}`
-        + (rss.dueCount ? ` · 已到期 ${rss.dueCount} 个待抓` : '') + '）</span>' : '—')}
-      ${statRow('在途抓取', rss.refreshing ? `${rss.refreshing} 个频道正在抓取` : '空闲')}
-      ${statRow('频道', `${f.total} 个 · 采集中 ${f.enabled} · 卡片展示 ${f.cardEnabled}`
-      + ` · 未抓过 ${f.neverFetched}` + (f.error ? ` · <span class="stat-bad">异常 ${f.error}</span>` : ''))}
-      ${statRow('条目', `${fmtNum(e.total)} 条 · 近 24h 新增 ${fmtNum(e.added24h)}`
-      + ` · 未读 ${fmtNum(e.unread)} · 收藏 ${fmtNum(e.favorite)}`)}
-      ${statRow('保留策略', (rss.keepPerFeed > 0 ? `每频道最多 ${fmtNum(rss.keepPerFeed)} 条` : '每频道不设条数上限')
-      + (rss.keepDays ? ` · 最长 ${fmtNum(rss.keepDays)} 天` : ' · 不限时长')
-      + ' · <span class="stat-muted">收藏的条目不参与清理</span>')}
-      ${statRow('时间跨度', e.oldest && e.newest ? `${fmtFull(e.oldest)} → ${fmtFull(e.newest)}` : '—')}
-    </div>`));
-
-  /* ---- 异常频道：只有失败时才出现，且默认展开 —— 这是最不该藏起来的信息 ---- */
-  if (problems.length) {
-    out.push(statSection('st-problems', '异常频道', `${problems.length} 个频道抓取失败`, true,
-      `<div class="stat-problems">${problems.map((p) => `
-        <div class="stat-problem">
-          <i class="stat-dot bad"></i>
-          <span class="stat-problem-name" title="${escapeHtml(p.title)}">${escapeHtml(p.title)}</span>
-          <span class="stat-problem-err" title="${escapeHtml(p.error)}">${escapeHtml(p.error)}</span>
-          <button class="btn btn-ghost btn-sm" data-retry="${escapeHtml(p.feedId)}">重试</button>
-        </div>`).join('')}</div>`));
-  }
-
-  /* ---- 日报 ---- */
-  const latest = dg.latest;
-  const latestLine = latest
-    ? `${latest.date} · ${latest.fallback ? '规则降级' : (latest.model || '未配置模型')}`
-      + (latest.stats ? ` · 采集 ${latest.stats.collected} → 保留 ${latest.stats.kept} · ${latest.stats.feeds} 频道` : '')
-      + (latest.error ? `（大模型失败：${latest.error}）` : '')
-    : '还没有生成过';
-
-  out.push(statSection('st-digest', '日报',
-    dg.enabled ? `已开启 · 每天 ${dg.time}` : '未开启',
-    false,
-    `<div class="stat-list">
-      ${statRow('自动生成', dg.enabled ? `已开启 · 每天 ${dg.time}` : '未开启')}
-      ${statRow('下次生成', dg.nextRunAt
-      ? `${fmtFull(dg.nextRunAt)} <span class="stat-muted">（${fmtRel(dg.nextRunAt, 'future')}）</span>` : '—')}
-      ${statRow('摘要范围', dg.scope === 'all' ? '全部频道' : '仅「采集」开启的频道')}
-      ${statRow('最近一份', escapeHtml(latestLine))}
-    </div>`));
-
-  body.innerHTML = out.join('');
-  // 状态页每 30s 重绘一次，重绘后必须重新套上展开态，否则用户展开的分组会被冲掉
-  bindSections(body);
-}
-
-async function loadStatusForm() {
-  const body = $('#statusBody');
-  if (!body) return;
-  const hint = $('#statusHint');
-  if (!statusData) body.innerHTML = '<p class="stat-loading">正在读取运行状态…</p>';
-  try {
-    const res = await apiFetch('/api/status');
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    statusData = await res.json();
-    renderStatus(statusData);
-    if (hint) hint.textContent = '每 30 秒自动刷新 · 内存与 CPU 取自容器 cgroup';
-  } catch (err) {
-    if (!statusData) body.innerHTML = `<p class="stat-error">读取失败：${escapeHtml(String(err.message || err))}</p>`;
-    if (hint) hint.textContent = '读取失败：' + String(err.message || err);
-  }
-}
-
-function startStatusPolling() {
-  stopStatusPolling();
-  statusPoll = setInterval(() => { if (window.__settingsOpen) loadStatusForm(); }, 30000);
-  // 运行时长本地递增，省掉每秒一次请求
-  statusTick = setInterval(() => {
-    const el = $('#statUptime');
-    if (el && statusUptimeBase) {
-      el.textContent = fmtDuration(statusUptimeBase.sec + (Date.now() - statusUptimeBase.at) / 1000);
-    }
-  }, 1000);
-}
-
-function stopStatusPolling() {
-  if (statusPoll) { clearInterval(statusPoll); statusPoll = null; }
-  if (statusTick) { clearInterval(statusTick); statusTick = null; }
-}
-
-/* 「关于」面板已 React 化（src/settings/AboutPane.jsx）：版本号拉取与检查更新
-   随面板挂载 / 卸载自洽完成（进入即拉、离开即清），旧 DOM 绑定移除 */
-
-/** 把快照拍平成纯文本，方便贴到 issue / 聊天里 */
-function buildDiagnostics(d) {
-  const app = d.app || {}; const db = d.db || {}; const rss = d.rss || {}; const dg = d.digest || {};
-  const f = rss.feeds || {}; const e = rss.entries || {}; const mem = app.memory || {};
-  const L = [];
-  L.push('拾阅（shiyue）诊断信息');
-  L.push('生成时间: ' + fmtFull(app.now));
-  L.push('');
-  L.push('[运行实例]');
-  L.push('版本 v' + app.version + ' | Node ' + app.node + ' | PID ' + app.pid);
-  L.push('启动于 ' + fmtFull(app.startedAt) + ' | 已运行 ' + fmtDuration(app.uptimeSec));
-  L.push('内存 RSS ' + fmtBytes(mem.rss) + ' | 堆 ' + fmtBytes(mem.heapUsed));
-  if (app.container) {
-    L.push('容器内存 ' + fmtBytes(app.container.memoryUsed)
-      + (app.container.memoryLimit ? ' / ' + fmtBytes(app.container.memoryLimit) : '（未设上限）')
-      + ' | 容器 CPU ' + (app.container.cpuPercent == null ? '—' : app.container.cpuPercent + '%'));
-  }
-  L.push('负载 ' + (app.loadavg || []).join(' / ') + '（' + app.cpuCount + ' 核）');
-  L.push('');
-  L.push('[数据库]');
-  L.push('就绪: ' + (db.ready ? '是' : '否') + (db.error ? ' | 错误: ' + db.error : ''));
-  L.push('往返延迟: ' + (db.latencyMs == null ? '—' : db.latencyMs + ' ms'));
-  if (db.pool) L.push('连接池: ' + db.pool.total + '/' + db.pool.max + '（空闲 ' + db.pool.idle + '，等待 ' + db.pool.waiting + '）');
-  if (db.tables) L.push('表行数: feeds ' + db.tables.feeds + ' | entries ' + db.tables.entries + ' | digests ' + db.tables.digests);
-  L.push('');
-  L.push('[RSS]');
-  L.push('间隔: 全局每 ' + rss.refreshMinutes + ' 分钟 | 单独设置 ' + f.perFeedInterval + ' 个'
-    + ' | 并发 ' + rss.concurrency + ' | 超时 ' + rss.timeoutSeconds + 's');
-  L.push('保留: 每频道 ' + (rss.keepPerFeed > 0 ? rss.keepPerFeed + ' 条' : '无条数上限') + ' | ' + (rss.keepDays ? '最长 ' + rss.keepDays + ' 天' : '不限时长')
-    + ' | 收藏条目不清理');
-  L.push('上次抓取: ' + (rss.lastRefreshAt ? fmtFull(rss.lastRefreshAt) : '无'));
-  L.push('下次抓取: ' + (rss.nextRefreshAt ? fmtFull(rss.nextRefreshAt) : '—')
-    + (rss.dueCount ? ' | 已到期 ' + rss.dueCount + ' 个' : ''));
-  if (rss.lastResult) {
-    L.push('上次结果: 新增 ' + rss.lastResult.added + ' | 失败 ' + rss.lastResult.failed
-      + ' | 耗时 ' + rss.lastResult.durationMs + 'ms');
-  }
-  L.push('频道: 共 ' + f.total + ' | 采集中 ' + f.enabled + ' | 卡片 ' + f.cardEnabled
-    + ' | 异常 ' + f.error + ' | 未抓过 ' + f.neverFetched);
-  L.push('条目: 共 ' + e.total + ' | 未读 ' + e.unread + ' | 收藏 ' + e.favorite + ' | 近 24h 新增 ' + e.added24h);
-  L.push('页面自动刷新: ' + (rss.autoRefreshMinutes ? '每 ' + rss.autoRefreshMinutes + ' 分钟' : '关闭'));
-  (rss.problems || []).forEach((p) => L.push('  ! ' + p.title + ' → ' + p.error));
-  L.push('');
-  L.push('[日报]');
-  L.push('自动生成: ' + (dg.enabled ? '开 · ' + dg.time : '关') + ' | 存档 ' + dg.count + ' 份');
-  if (dg.latest) L.push('最近一份: ' + dg.latest.date + ' | ' + (dg.latest.fallback ? '规则降级' : dg.latest.model));
-  return L.join('\n');
-}
 
 /* ============================================================
  * 事件绑定
@@ -1239,55 +909,6 @@ viewModeEl.addEventListener('click', (ev) => {
 // 设置弹层的关闭按钮 / 遮罩点击 / tab 点击已随外壳 React 化由
 // src/settings/SettingsModal.jsx 内部处理，旧绑定移除
 
-/* ---------- 状态页：刷新 / 复制诊断 / 异常频道重试 ---------- */
-$('#statusRefreshBtn').addEventListener('click', async () => {
-  const btn = $('#statusRefreshBtn');
-  btn.disabled = true;
-  await loadStatusForm();
-  btn.disabled = false;
-});
-
-$('#statusCopyBtn').addEventListener('click', async () => {
-  if (!statusData) { toast('还没有读到状态，稍等一下', false); return; }
-  const text = buildDiagnostics(statusData);
-  try {
-    await navigator.clipboard.writeText(text);
-    toast('诊断信息已复制');
-  } catch (_) {
-    // 非 HTTPS / 无剪贴板权限时的兜底：把文本塞进一个可全选的输入框
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.cssText = 'position:absolute;left:-9999px;top:0';
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand('copy');
-    ta.remove();
-    toast(ok ? '诊断信息已复制' : '复制失败，请手动复制', ok);
-  }
-});
-
-// 重试按钮是渲染出来的，用事件委托挂一次就够
-$('#statusBody').addEventListener('click', async (ev) => {
-  const btn = ev.target.closest('[data-retry]');
-  if (!btn) return;
-  const id = btn.getAttribute('data-retry');
-  btn.disabled = true;
-  btn.textContent = '抓取中…';
-  try {
-    const res = await apiFetch('/api/feeds/' + id + '/refresh', { method: 'POST' });
-    const data = await res.json().catch(() => ({}));
-    const err = (data.result && data.result.error) || data.error;
-    if (!res.ok || err) throw new Error(err || 'HTTP ' + res.status);
-    toast('抓取成功，新增 ' + ((data.result && data.result.added) || 0) + ' 条');
-    await loadFeeds();
-    await loadStatusForm();
-  } catch (e) {
-    toast('重试失败：' + (e.message || e), false);
-    btn.disabled = false;
-    btn.textContent = '重试';
-  }
-});
-
 /* OPML 导出：把当前账号的订阅源整理成标准 OPML（分组作为文件夹），浏览器下载 */
 function exportOpml() {
   const feeds = state.feedList || [];
@@ -1329,153 +950,6 @@ function exportOpml() {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   toast('已导出 ' + feeds.length + ' 个订阅源');
 }
-/* 账号：保存 */
-$('#saveAccBtn').addEventListener('click', async () => {
-  const btn = $('#saveAccBtn');
-  btn.disabled = true;
-  btn.textContent = '保存中…';
-  accResult.className = 'test-result';
-  try {
-    const res = await apiFetch('/api/account', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        username: $('#accUsername').value,
-        currentPassword: $('#accCurrent').value,
-        newPassword: $('#accNew').value,
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) { showResult(accResult, false, data.error || '保存失败'); return; }
-    showResult(accResult, true, '账号已更新');
-    toast('账号已更新');
-    $('#accCurrent').value = '';
-    $('#accNew').value = '';
-    state.username = data.username;
-  } catch (err) {
-    showResult(accResult, false, '保存失败：' + (err.message || err));
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '保存账号';
-  }
-});
-
-/* 账号：退出登录 */
-$('#logoutBtn').addEventListener('click', async () => {
-  try {
-    await apiFetch('/api/logout', { method: 'POST' });
-  } catch (_) { /* 忽略 */ }
-  location.replace('/login.html');
-});
-
-/* ---------- 用户管理（仅管理员，见「账号 → 用户管理」）---------- */
-const userResult = $('#userResult');
-let userListCache = [];
-
-async function loadUserList() {
-  const listEl = $('#userList');
-  if (!listEl) return;
-  try {
-    const res = await apiFetch('/api/users');
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
-    userListCache = data.users || [];
-    renderUserList();
-  } catch (err) {
-    listEl.innerHTML = `<div class="hint" style="padding:10px">读取用户失败：${escapeHtml(err.message || String(err))}</div>`;
-  }
-}
-
-function renderUserList() {
-  const listEl = $('#userList');
-  if (!listEl) return;
-  const sub = $('#accUsersSub');
-  if (sub) sub.textContent = userListCache.length ? `共 ${userListCache.length} 个` : '';
-  if (!userListCache.length) { listEl.innerHTML = '<div class="hint">还没有用户</div>'; return; }
-  listEl.innerHTML = userListCache.map((u) => `
-    <div class="user-row" data-id="${escapeHtml(u.id)}">
-      <span class="u-name">${escapeHtml(u.username)}</span>
-      ${u.role === 'admin' ? '<span class="u-badge">管理员</span>' : '<span class="u-badge role-user">普通</span>'}
-      <span class="u-meta">${Number(u.feedCount) || 0} 个源</span>
-      ${u.isSelf ? '<span class="u-self">当前</span>' : ''}
-      <span class="u-spacer"></span>
-      ${u.isSelf ? '' : `<button class="u-btn" data-act="role" data-id="${escapeHtml(u.id)}">${u.role === 'admin' ? '降为普通' : '设为管理员'}</button>`}
-      <button class="u-btn" data-act="pass" data-id="${escapeHtml(u.id)}">改密码</button>
-      ${u.isSelf ? '' : `<button class="u-btn danger" data-act="del" data-id="${escapeHtml(u.id)}">删除</button>`}
-    </div>`).join('');
-}
-
-$('#userList').addEventListener('click', async (ev) => {
-  const btn = ev.target.closest('.u-btn');
-  if (!btn) return;
-  const id = btn.getAttribute('data-id');
-  const act = btn.getAttribute('data-act');
-  const u = userListCache.find((x) => String(x.id) === String(id));
-  if (!u) return;
-  try {
-    if (act === 'del') {
-      if (!window.confirm(`确定删除用户「${u.username}」？其订阅源、条目与日报都会一并删除，且不可恢复。`)) return;
-      const res = await apiFetch('/api/users/' + id, { method: 'DELETE' });
-      const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(d.error || 'HTTP ' + res.status);
-      showResult(userResult, true, `已删除 ${u.username}`);
-      toast(`已删除用户 ${u.username}`);
-      await loadUserList();
-    } else if (act === 'role') {
-      const next = u.role === 'admin' ? 'user' : 'admin';
-      const res = await apiFetch('/api/users/' + id, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role: next }),
-      });
-      const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(d.error || 'HTTP ' + res.status);
-      showResult(userResult, true, `已将 ${u.username} 设为${next === 'admin' ? '管理员' : '普通用户'}`);
-      await loadUserList();
-    } else if (act === 'pass') {
-      const np = window.prompt(`为「${u.username}」设置新密码（至少 4 位）：`);
-      if (np == null) return;
-      if (np.length < 4) { showResult(userResult, false, '密码至少 4 位'); return; }
-      const res = await apiFetch('/api/users/' + id, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: np }),
-      });
-      const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(d.error || 'HTTP ' + res.status);
-      showResult(userResult, true, `已重置 ${u.username} 的密码`);
-    }
-  } catch (err) {
-    showResult(userResult, false, '操作失败：' + (err.message || err));
-  }
-});
-
-$('#addUserBtn').addEventListener('click', async () => {
-  const btn = $('#addUserBtn');
-  const username = $('#newUserName').value.trim();
-  const password = $('#newUserPass').value;
-  const role = $('#newUserRole').value;
-  if (!username) { showResult(userResult, false, '请填写用户名'); return; }
-  if (password.length < 4) { showResult(userResult, false, '密码至少 4 位'); return; }
-  btn.disabled = true;
-  try {
-    const res = await apiFetch('/api/users', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password, role }),
-    });
-    const d = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(d.error || 'HTTP ' + res.status);
-    showResult(userResult, true, `已创建用户 ${username}`);
-    toast(`已创建用户 ${username}`);
-    $('#newUserName').value = '';
-    $('#newUserPass').value = '';
-    $('#newUserRole').value = 'user';
-    await loadUserList();
-  } catch (err) {
-    showResult(userResult, false, '创建失败：' + (err.message || err));
-  } finally {
-    btn.disabled = false;
-  }
-});
-
 /* ============================================================
  * 日报 / 模型 / 日报设置 事件绑定
  * ============================================================ */
@@ -3086,10 +2560,6 @@ applyAppearance(readAppearance());
 /* ============================================================
  * PWA：Service Worker + 「添加到手机」
  * ============================================================ */
-// 安装指引里显示当前访问的域名（不写死，谁自建就显示谁自己的）
-const installHost = $('#installHost');
-if (installHost) installHost.textContent = location.host;
-
 // 注册 Service Worker（仅 https / localhost 会生效；用 http 的局域网 IP 访问时静默忽略）
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -3123,14 +2593,6 @@ async function promptInstall() {
   if (outcome === 'accepted') toast('已添加到手机');
   return true;
 }
-
-document.querySelectorAll('.install-trigger').forEach((btn) => {
-  btn.addEventListener('click', async () => {
-    if (await promptInstall()) return;
-    // 浏览器没给出安装事件：给手动指引（iOS Safari / 部分 Edge 版本）
-    toast('请用手机浏览器菜单里的「安装应用 / 添加到主屏幕」');
-  });
-});
 
 // 让浏览器地址栏 / 状态栏颜色跟随主题（取顶栏底色 --panel，PWA 独立窗口更协调）
 function syncThemeColor() {
@@ -3427,11 +2889,13 @@ window.shiyue = {
   scrollTop: () => window.scrollTo({ top: 0, behavior: prefersReducedMotion() ? 'auto' : 'smooth' }),
   // —— v1.3.0 起 React 化组件的桥接面（设置弹层 / 外观 / 关于） ——
   apiFetch, isAdmin, toast,
-  lockPageScroll, unlockPageScroll, stopStatusPolling,
-  settingsTabEffect, getLegacySettingsPane, getSettingsSummary,
+  lockPageScroll, unlockPageScroll,
+  getSettingsSummary,
   getAppearance: readAppearance, setAppearance, resetAppearance,
   // —— v1.5.0 起数据源面板 React 化（P2c，组件见 src/settings/SourcePane.jsx） ——
   loadFeeds, loadPage, renderFeedSelect, renderReaderChannels,
   scheduleAutoRefresh, setLayout, setSettingsSummary,
   bindSections, groupFeeds,
+  // —— v1.6.0 起账号 / 状态面板 React 化（P2d，组件见 src/settings/AccountPane.jsx / StatusPane.jsx） ——
+  promptInstall,
 };

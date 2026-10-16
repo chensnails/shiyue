@@ -2,21 +2,19 @@
  *
  * 渐进式迁移策略（与命令面板一致的混合期方案）：
  * - 弹层外壳（遮罩 / 标题 / tab 栏 / 关闭）由 React 渲染；
- * - 「数据源 / 模型 / 外观 / 关于」四个面板已 React 化（本目录 SourcePane /
- *   ModelPane / AppearancePane / AboutPane，P2c 起数据源迁出）；
- * - 其余面板（账号 / 状态）暂由旧 DOM 承接：它们装在
- *   index.html 的 #legacyPanes 隐藏容器里，选中对应 tab 时由本组件搬进
- *   tab-pane-legacy 插槽（appendChild 移动节点，旧监听与 ID 全部保留，
- *   行为零变化），随 P2d 迁移后移除。
- * - 旧 app.js 的 openSettings/closeSettings 委托给本组件注册的宿主；
- *   tab 切换副作用（loaders / 状态轮询）走 window.shiyue.settingsTabEffect。
+ * - 全部六个面板均已 React 化（本目录 SourcePane / ModelPane / AppearancePane /
+ *   AboutPane / AccountPane / StatusPane，P2d 起账号与状态迁出）；
+ * - 旧 #legacyPanes 隐藏容器与 legacy-slot 搬运机制随 P2d 一并退役。
+ * - 旧 app.js 的 openSettings/closeSettings 委托给本组件注册的宿主。
  */
 
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AboutPane } from './AboutPane.jsx';
 import { AppearancePane } from './AppearancePane.jsx';
 import { ModelPane } from './ModelPane.jsx';
 import { SourcePane } from './SourcePane.jsx';
+import { AccountPane } from './AccountPane.jsx';
+import { StatusPane } from './StatusPane.jsx';
 
 const TABS = [
   ['source', '数据源'],
@@ -28,27 +26,15 @@ const TABS = [
 ];
 // 管理员专属 tab（与管理端约定一致；模型配置每用户独立，普通用户也能配）
 const ADMIN_TABS = ['status'];
-// 尚未 React 化的面板（P2c 起数据源 / 模型已迁出）：由旧 DOM 经 legacy-slot 承接
-const LEGACY_TABS = ['account', 'status'];
 
 const S = () => (typeof window !== 'undefined' ? window.shiyue : null);
 const isAdminNow = () => !!(S() && S().isAdmin && S().isAdmin());
-
-/** 把 slot 里的旧面板还回 #legacyPanes 隐藏容器（移动节点，旧监听/ID 全保留） */
-const stashLegacyPanes = (slot, stash) => {
-  if (!slot || !stash) return;
-  [...slot.children].forEach((el) => {
-    el.hidden = true;
-    stash.appendChild(el);
-  });
-};
 
 export function SettingsModal() {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState('source');
   const [summary, setSummary] = useState('');
   const [admin, setAdmin] = useState(isAdminNow);
-  const slotRef = useRef(null);
 
   // 宿主注册：旧 app 的 openSettings/closeSettings 委托到这里
   useEffect(() => {
@@ -83,45 +69,6 @@ export function SettingsModal() {
     if (s && s.lockPageScroll) s.lockPageScroll();
     return () => { if (s && s.unlockPageScroll) s.unlockPageScroll(); };
   }, [open]);
-
-  // 关闭时停掉状态页轮询（切 tab 的启停由 settingsTabEffect 负责）
-  useEffect(() => {
-    if (open) return;
-    const s = S();
-    if (s && s.stopStatusPolling) s.stopStatusPolling();
-  }, [open]);
-
-  // tab 切换副作用：旧 app 加载对应表单 / 启停状态轮询；
-  // about / appearance 已 React 化，由组件自行加载（settingsTabEffect 内跳过）
-  useEffect(() => {
-    if (!open) return;
-    const s = S();
-    if (s && s.settingsTabEffect) s.settingsTabEffect(tab);
-  }, [open, tab]);
-
-  // legacy 面板：slot 常驻挂载（非 legacy tab 下仅隐藏，不销毁旧 DOM），
-  // 选中时把旧面板搬进插槽；切走 / 关闭时还回 #legacyPanes 隐藏容器。
-  // React 只在 ref 卸载时清空 slotRef，节点本身仍可达，故还回动作对
-  // 「关闭弹层导致 slot 随 modal 一起卸载」同样有效。
-  useLayoutEffect(() => {
-    const slot = slotRef.current;
-    const stash = document.getElementById('legacyPanes');
-    const isLegacy = open && LEGACY_TABS.indexOf(tab) >= 0;
-    if (isLegacy) {
-      const s = S();
-      const el = s && s.getLegacySettingsPane ? s.getLegacySettingsPane(tab) : null;
-      if (el && slot) {
-        stashLegacyPanes(slot, stash);          // 先还上一个，避免 slot 里堆多个
-        el.hidden = false;
-        slot.appendChild(el);
-      }
-    } else {
-      stashLegacyPanes(slot, stash);
-    }
-  }, [open, tab]);
-
-  // 组件整体卸载（页面卸载 / HMR）：slot 可能已 detached，面板仍要还回文档内的隐藏容器
-  useLayoutEffect(() => () => stashLegacyPanes(slotRef.current, document.getElementById('legacyPanes')), []);
 
   const close = () => setOpen(false);
   const onMaskClick = (ev) => { if (ev.target === ev.currentTarget) close(); };
@@ -160,12 +107,9 @@ export function SettingsModal() {
           {tab === 'source' && open && <SourcePane admin={admin} />}
           {tab === 'appearance' && open && <AppearancePane />}
           {tab === 'model' && open && <ModelPane />}
+          {tab === 'account' && open && <AccountPane />}
+          {tab === 'status' && open && <StatusPane />}
           {tab === 'about' && open && <AboutPane />}
-          <div
-            className="tab-pane-legacy"
-            ref={slotRef}
-            hidden={!open || LEGACY_TABS.indexOf(tab) < 0}
-          />
         </div>
       </div>
     </div>
