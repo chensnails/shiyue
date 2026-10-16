@@ -328,31 +328,11 @@
   </section>
 </div>
 
-<!-- 设置面板 -->
-<div class="modal-mask" id="settingsMask" hidden>
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
-    <div class="modal-head">
-      <div>
-        <h2 id="settingsTitle">设置</h2>
-        <p class="modal-sub" id="settingsSummary">加载中…</p>
-      </div>
-      <button class="modal-close" id="settingsClose" aria-label="关闭"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-x"/></svg></button>
-    </div>
-
-    <div class="tabs" id="tabs">
-      <button class="tab active" data-tab="source">数据源</button>
-      <button class="tab" data-tab="model">模型</button>
-      <button class="tab" data-tab="account">账号</button>
-      <button class="tab" data-tab="appearance">外观</button>
-      <button class="tab" data-tab="status">状态</button>
-      <button class="tab" data-tab="about">关于</button>
-    </div>
-
-    <div class="modal-body">
-
-      <!-- 数据源：RSS 订阅。整块只有一个滚动容器（.pane-scroll），
-           里面用可折叠分组切块，避免频道一多页面就长得看不到头 -->
-      <section class="tab-pane" data-pane="source">
+<!-- 设置弹层：已 React 化（组件见 src/settings/SettingsModal.jsx）。外观 / 关于为 React 组件；
+     其余面板暂由旧 DOM 承接，装在 #legacyPanes 里，选中对应 tab 时由桥接层搬进弹层 -->
+<div id="settingsRoot"></div>
+<div id="legacyPanes" hidden>
+<section class="tab-pane" data-pane="source" hidden>
         <div class="pane-scroll">
 
           <!-- 添加订阅：高频动作，常显，不折进分组里 -->
@@ -464,9 +444,7 @@
           </div>
         </div>
       </section>
-
-      <!-- 模型 -->
-      <section class="tab-pane" data-pane="model" hidden>
+<section class="tab-pane" data-pane="model" hidden>
         <div class="form">
           <div class="form-row">
             <label for="llmBaseUrl">模型地址（OpenAI 兼容）</label>
@@ -511,12 +489,7 @@
           </div>
         </div>
       </section>
-
-      <!-- 日报设置已经搬到「AI → 日报设置」子页，这里不再重复一份
-           （重复的 id 会让 $() 抓到错的那个）-->
-
-      <!-- 账号 -->
-      <section class="tab-pane" data-pane="account" hidden>
+<section class="tab-pane" data-pane="account" hidden>
         <div class="pane-scroll">
           <div class="test-result" id="accResult"></div>
 
@@ -592,108 +565,7 @@
           </div>
         </div>
       </section>
-
-      <!-- 外观：纯前端偏好，只存本机 localStorage，不写服务端设置。
-           改完立即生效，不需要「保存」。 -->
-      <section class="tab-pane" data-pane="appearance" hidden>
-        <div class="pane-scroll">
-          <div class="appr">
-            <div class="appr-row">
-              <div class="appr-label">主题
-                <small>前三套可跟随系统；GitHub 暗黑是整套配色包，主色固定为 GitHub 蓝</small>
-              </div>
-              <div class="appr-ctl">
-                <div class="seg" id="apprTheme">
-                  <button class="seg-btn" type="button" data-theme-mode="auto">跟随系统</button>
-                  <button class="seg-btn" type="button" data-theme-mode="light">浅色</button>
-                  <button class="seg-btn" type="button" data-theme-mode="dark">CommaFeed 暗色</button>
-                  <button class="seg-btn" type="button" data-theme-mode="github">GitHub 暗黑</button>
-                </div>
-              </div>
-            </div>
-
-            <div class="appr-row">
-              <div class="appr-label">主色调
-                <small id="apprAccentHint">中性底色只有一套且已校准，这里只换强调色</small>
-              </div>
-              <div class="appr-ctl">
-                <div class="swatches" id="apprAccent">
-                  <button class="swatch" type="button" data-accent="blue" title="蓝" aria-label="蓝"></button>
-                  <button class="swatch" type="button" data-accent="violet" title="靛紫" aria-label="靛紫"></button>
-                  <button class="swatch" type="button" data-accent="teal" title="青" aria-label="青"></button>
-                  <button class="swatch" type="button" data-accent="green" title="翠绿" aria-label="翠绿"></button>
-                  <button class="swatch" type="button" data-accent="amber" title="琥珀" aria-label="琥珀"></button>
-                  <button class="swatch" type="button" data-accent="rose" title="玫红" aria-label="玫红"></button>
-                </div>
-              </div>
-            </div>
-
-            <div class="appr-row">
-              <div class="appr-label">字号
-                <small>整站等比缩放，按钮、列表、设置一起变</small>
-              </div>
-              <div class="appr-ctl">
-                <div class="seg" id="apprFontSize">
-                  <button class="seg-btn" type="button" data-font-size="s">小</button>
-                  <button class="seg-btn" type="button" data-font-size="m">中</button>
-                  <button class="seg-btn" type="button" data-font-size="l">大</button>
-                </div>
-              </div>
-            </div>
-
-            <div class="appr-row">
-              <div class="appr-label">正文字体
-                <small>只作用于文章正文，界面字体不变</small>
-              </div>
-              <div class="appr-ctl">
-                <div class="seg" id="apprReaderFont">
-                  <button class="seg-btn" type="button" data-reader-font="sans">无衬线</button>
-                  <button class="seg-btn" type="button" data-reader-font="serif">衬线</button>
-                </div>
-              </div>
-            </div>
-
-            <div class="appr-row">
-              <div class="appr-label">正文行高</div>
-              <div class="appr-ctl">
-                <div class="seg" id="apprReaderLh">
-                  <button class="seg-btn" type="button" data-reader-lh="s">紧凑</button>
-                  <button class="seg-btn" type="button" data-reader-lh="m">标准</button>
-                  <button class="seg-btn" type="button" data-reader-lh="l">宽松</button>
-                </div>
-              </div>
-            </div>
-
-            <div class="appr-row">
-              <div class="appr-label">阅读宽度
-                <small>越窄每行字数越少，读起来越省力</small>
-              </div>
-              <div class="appr-ctl">
-                <div class="seg" id="apprReaderWidth">
-                  <button class="seg-btn" type="button" data-reader-width="s">窄</button>
-                  <button class="seg-btn" type="button" data-reader-width="m">标准</button>
-                  <button class="seg-btn" type="button" data-reader-width="l">宽</button>
-                  <button class="seg-btn" type="button" data-reader-width="full">全宽</button>
-                </div>
-              </div>
-            </div>
-
-            <!-- 预览：不用切回文章页就能看出字号 / 字体 / 行高的效果 -->
-            <div class="appr-preview">
-              <p class="appr-preview-h">正文预览</p>
-              <p class="appr-preview-t" id="apprPreview">拾阅是一个自托管的 RSS 阅读站。这一段的字体、字号与行高会跟着上面的选择变，不用切回文章页反复试。</p>
-            </div>
-          </div>
-        </div>
-
-        <div class="pane-foot">
-          <button class="btn btn-ghost btn-sm" id="apprResetBtn" type="button">恢复默认</button>
-          <span class="pane-foot-note">外观已存入你的账号，换设备也一致</span>
-        </div>
-      </section>
-
-      <!-- 状态：只读体检，不涉及任何配置。分组由 renderStatus() 动态生成 -->
-      <section class="tab-pane" data-pane="status" hidden>
+<section class="tab-pane" data-pane="status" hidden>
         <div class="status-body" id="statusBody"></div>
         <div class="pane-foot">
           <span class="hint" id="statusHint"></span>
@@ -703,41 +575,6 @@
           </div>
         </div>
       </section>
-
-      <!-- 关于：版本信息与更新检测 -->
-      <section class="tab-pane" data-pane="about" hidden>
-        <div class="about-body pane-scroll">
-          <div class="about-brand">
-            <img class="about-logo" src="/favicon.svg" alt="拾阅" width="56" height="56">
-            <div class="about-brand-txt">
-              <h3 class="about-name">拾阅 <span class="about-en">shiyue</span></h3>
-              <p class="about-slogan">拾取值得读的 —— 自托管 RSS 阅读器 · 卡片墙 · 每日 AI 简报</p>
-            </div>
-          </div>
-          <dl class="about-kv">
-            <div class="about-kv-row">
-              <dt>当前版本</dt>
-              <dd id="aboutVersion">读取中…</dd>
-            </div>
-            <div class="about-kv-row">
-              <dt>仓库地址</dt>
-              <dd><a href="https://github.com/chensnails/shiyue" target="_blank" rel="noopener">github.com/chensnails/shiyue</a></dd>
-            </div>
-            <div class="about-kv-row">
-              <dt>开源许可</dt>
-              <dd>MIT</dd>
-            </div>
-          </dl>
-          <div class="about-check">
-            <button class="btn btn-primary" id="aboutCheckBtn" type="button">检查更新</button>
-          </div>
-          <div class="test-result" id="aboutCheckResult" role="status"></div>
-          <p class="about-note">版本检测会向 GitHub 查询最新的 Release / Tag（结果缓存 10 分钟，不会频繁请求）。</p>
-        </div>
-      </section>
-
-    </div>
-  </div>
 </div>
 
 <div id="toast" class="toast"></div>

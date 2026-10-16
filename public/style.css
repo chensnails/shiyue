@@ -1189,6 +1189,11 @@ body.modal-open {
 .swatches.disabled .swatch:hover { transform: none; }
 .swatches.disabled .swatch.active { border-color: var(--border-strong); box-shadow: none; }
 
+/* legacy 面板插槽（v1.3.0 起设置弹层外壳 React 化的过渡容器）：
+   未迁移的面板（数据源 / 模型 / 账号 / 状态）由 React 外壳在选中 tab 时
+   从 #legacyPanes 隐藏容器搬入此处显示，行为与旧 DOM 完全一致 */
+.tab-pane-legacy { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
 .appr-preview { margin: 4px 22px 14px; padding: 14px 16px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--border); }
 .appr-preview-h {
   margin: 0 0 8px;

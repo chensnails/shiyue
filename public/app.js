@@ -792,9 +792,10 @@ function renderSkeletons(n = 8) {
 /* ============================================================
  * 设置面板
  * ============================================================ */
-const settingsMask = $('#settingsMask');
+// 设置弹层自 v1.3.0 起外壳 React 化（挂载点 #settingsRoot，组件见 src/settings/）：
+// 开合状态由 React 组件同步到 window.__settingsOpen，旧 #settingsMask / #settingsSummary
+// DOM 已移除；openSettings / closeSettings 委托给 React 宿主 window.__settingsHost。
 const feedListEl = $('#feedList');
-const settingsSummary = $('#settingsSummary');
 const settingsHint = $('#settingsHint');
 const accResult = $('#accResult');
 
@@ -805,9 +806,9 @@ const isAdmin = () => state.role === 'admin';
 /** 按角色显隐设置里管理员专属的部分：模型/状态 tab、采集参数、用户管理、保存设置、日报设置 */
 function applyRoleUI() {
   const admin = isAdmin();
-  $$('#tabs .tab').forEach((t) => {
-    t.hidden = !admin && ADMIN_TABS.indexOf(t.getAttribute('data-tab')) >= 0;
-  });
+  // 设置弹层 tab 已 React 化：按角色过滤交给宿主（管理员专属 tab 由外壳不再渲染）
+  const host = window.__settingsHost;
+  if (host && host.setAdminFlag) host.setAdminFlag(admin);
   const srcParams = document.querySelector('[data-sec="src-params"]');
   if (srcParams) srcParams.hidden = !admin;          // 采集参数是站点级设置
   const usersSec = $('#accUsersSec');
@@ -820,17 +821,27 @@ function applyRoleUI() {
   if (!admin && aiPage === 'settings') switchAiPage('digest');
 }
 
-function switchTab(name) {
+/** 设置弹层 tab 切换的副作用（v1.3.0 起由 React 外壳在打开 / 切 tab 时经桥调用）。
+ *  tab 高亮与面板显隐由 React 层管理（legacy 面板搬入 / 还回插槽），这里只加载
+ *  对应表单并启停状态轮询；显隐循环做了 legacy 容器兜底，防止节点遗落在错误状态。 */
+function settingsTabEffect(name) {
   if (!isAdmin() && ADMIN_TABS.indexOf(name) >= 0) name = 'source';   // 普通用户看不到这些 tab
-  $$('#tabs .tab').forEach((t) => t.classList.toggle('active', t.getAttribute('data-tab') === name));
-  $$('.tab-pane').forEach((p) => { p.hidden = p.getAttribute('data-pane') !== name; });
+  $$('#legacyPanes .tab-pane, .tab-pane-legacy .tab-pane').forEach((p) => {
+    p.hidden = p.getAttribute('data-pane') !== name;
+  });
   if (name === 'source') loadSourceForm();
   if (name === 'model') loadModelForm();
-  if (name === 'about') loadAboutPage();
   // 「日报」已经不是这里的 tab 了，搬去「AI → 日报设置」子页
   if (name === 'account') loadAccountForm();
+  // appearance / about 已 React 化，无旧 loader
   // 状态页是唯一会自己轮询的页面，切走就停，别在后台空转
   if (name === 'status') { loadStatusForm(); startStatusPolling(); } else stopStatusPolling();
+}
+
+/** legacy 设置面板查询（React 外壳搬运用）：面板只存在于 #legacyPanes 隐藏容器
+ *  或弹层内的 .tab-pane-legacy 插槽，全局查找两个位置都能命中 */
+function getLegacySettingsPane(tab) {
+  return document.querySelector('[data-pane="' + tab + '"]');
 }
 
 /* ---------- 弹层打开时锁住背景页面 ----------
@@ -863,17 +874,16 @@ function unlockPageScroll() {
   window.scrollTo(0, scrollLockY);   // 回到打开弹层前的位置
 }
 
+/** 打开设置弹层（外壳 React 化后仅作为委托入口：锁屏 / tab 副作用 / 面板加载
+ *  都由 SettingsModal 挂载后自行完成） */
 function openSettings(tab) {
-  settingsMask.hidden = false;
-  lockPageScroll();
-  switchTab(tab || 'source');
+  const host = window.__settingsHost;
+  if (host && host.open) host.open(tab || 'source');
 }
 
 function closeSettings() {
-  if (settingsMask.hidden) return;
-  settingsMask.hidden = true;
-  stopStatusPolling();
-  unlockPageScroll();
+  const host = window.__settingsHost;
+  if (host && host.close) host.close();
 }
 
 function showResult(el, ok, msg) {
@@ -1259,6 +1269,22 @@ function toggleGroupCollapse(name) {
   renderFeedList();
 }
 
+/** 设置弹层副标题文本（纯计算：React 宿主打开弹层时也要用同一份） */
+function getSettingsSummary() {
+  const meta = state.feedMeta || {};
+  const total = meta.total || 0;
+  if (!total) return '还没有订阅源';
+  const on = meta.enabled || 0;
+  const card = meta.cardEnabled == null ? on : meta.cardEnabled;
+  return `共 ${total} 个订阅源 · 采集开启 ${on} 个 · 卡片展示 ${card} 个`;
+}
+
+/** 推送副标题给 React 外壳（宿主未就绪时静默） */
+function setSettingsSummary(text) {
+  const host = window.__settingsHost;
+  if (host && host.setSummary) host.setSummary(text);
+}
+
 function updateSourceSummary() {
   const meta = state.feedMeta || {};
   const total = meta.total || 0;
@@ -1266,9 +1292,7 @@ function updateSourceSummary() {
   const card = meta.cardEnabled == null ? on : meta.cardEnabled;
   const groups = (meta.groups || []).length;
 
-  settingsSummary.textContent = total
-    ? `共 ${total} 个订阅源 · 采集开启 ${on} 个 · 卡片展示 ${card} 个`
-    : '还没有订阅源';
+  setSettingsSummary(getSettingsSummary());
 
   const bits = [];
   bits.push(`<strong>${on}</strong> / ${total} 个频道在定时采集`);
@@ -1547,7 +1571,7 @@ async function loadStatusForm() {
 
 function startStatusPolling() {
   stopStatusPolling();
-  statusPoll = setInterval(() => { if (!settingsMask.hidden) loadStatusForm(); }, 30000);
+  statusPoll = setInterval(() => { if (window.__settingsOpen) loadStatusForm(); }, 30000);
   // 运行时长本地递增，省掉每秒一次请求
   statusTick = setInterval(() => {
     const el = $('#statUptime');
@@ -1562,52 +1586,8 @@ function stopStatusPolling() {
   if (statusTick) { clearInterval(statusTick); statusTick = null; }
 }
 
-/* ---------- 关于（版本信息与更新检测） ---------- */
-async function loadAboutPage() {
-  const el = $('#aboutVersion');
-  try {
-    const res = await apiFetch('/api/version');
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const d = await res.json();
-    if (el) el.textContent = 'v' + (d.version || '—');
-  } catch (err) {
-    if (el) el.textContent = '读取失败';
-  }
-  // 每次进入先清掉上一次的检测结果，避免留着过期信息
-  const r = $('#aboutCheckResult');
-  if (r) { r.className = 'test-result'; r.innerHTML = ''; }
-}
-
-$('#aboutCheckBtn').addEventListener('click', async () => {
-  const btn = $('#aboutCheckBtn');
-  const r = $('#aboutCheckResult');
-  btn.disabled = true;
-  const oldText = btn.textContent;
-  btn.textContent = '检测中…';
-  if (r) { r.className = 'test-result'; r.innerHTML = ''; }
-  try {
-    const res = await apiFetch('/api/version/check', { method: 'POST' });
-    const d = await res.json().catch(() => ({}));
-    if (!d.ok) throw new Error(d.error || ('HTTP ' + res.status));
-    if (d.hasUpdate) {
-      const link = d.releaseUrl
-        ? ` · <a href="${escapeHtml(d.releaseUrl)}" target="_blank" rel="noopener">查看发布</a>`
-        : '';
-      if (r) {
-        r.className = 'test-result show upd';
-        r.innerHTML = `发现新版本 <b>v${escapeHtml(d.latest)}</b>（当前 v${escapeHtml(d.current)}）${link}`;
-      }
-    } else if (r) {
-      r.className = 'test-result show ok';
-      r.textContent = `已是最新版本（v${d.current}）`;
-    }
-  } catch (err) {
-    showResult(r, false, '检测失败：' + String(err.message || err));
-  } finally {
-    btn.disabled = false;
-    btn.textContent = oldText;
-  }
-});
+/* 「关于」面板已 React 化（src/settings/AboutPane.jsx）：版本号拉取与检查更新
+   随面板挂载 / 卸载自洽完成（进入即拉、离开即清），旧 DOM 绑定移除 */
 
 /** 把快照拍平成纯文本，方便贴到 issue / 聊天里 */
 function buildDiagnostics(d) {
@@ -1713,13 +1693,8 @@ viewModeEl.addEventListener('click', (ev) => {
   const b = ev.target.closest('.viewmode-btn');
   if (b) setViewMode(b.getAttribute('data-mode'));
 });
-$('#settingsClose').addEventListener('click', closeSettings);
-settingsMask.addEventListener('click', (ev) => { if (ev.target === settingsMask) closeSettings(); });
-
-$('#tabs').addEventListener('click', (ev) => {
-  const t = ev.target.closest('.tab');
-  if (t) switchTab(t.getAttribute('data-tab'));
-});
+// 设置弹层的关闭按钮 / 遮罩点击 / tab 点击已随外壳 React 化由
+// src/settings/SettingsModal.jsx 内部处理，旧绑定移除
 
 /* ---------- 状态页：刷新 / 复制诊断 / 异常频道重试 ---------- */
 $('#statusRefreshBtn').addEventListener('click', async () => {
@@ -2424,7 +2399,7 @@ function scheduleAutoRefresh() {
   autoRefreshLastAt = Date.now();
   autoRefreshTimer = setInterval(() => {
     if (document.hidden) return;                        // 后台不跑，回到前台再补
-    if (settingsMask && !settingsMask.hidden) return;   // 正在改设置就别动列表
+    if (window.__settingsOpen) return;   // 正在改设置就别动列表
     autoRefreshLastAt = Date.now();
     checkForNew().catch(() => { /* 自动刷新失败就静默跳过，不打扰用户 */ });
   }, mins * 60000);
@@ -2532,13 +2507,13 @@ document.addEventListener('visibilitychange', () => {
   const mins = autoRefreshMinutes();
   if (!mins) return;
   if (Date.now() - autoRefreshLastAt < mins * 60000) return;
-  if (settingsMask && !settingsMask.hidden) return;
+  if (window.__settingsOpen) return;
   autoRefreshLastAt = Date.now();
   checkForNew().catch(() => {});
 });
 
 document.addEventListener('keydown', (ev) => {
-  if (ev.key === 'Escape' && !settingsMask.hidden) closeSettings();
+  if (ev.key === 'Escape' && window.__settingsOpen) closeSettings();
 });
 
 loadMoreBtn.addEventListener('click', () => loadPage(false));
@@ -3809,15 +3784,8 @@ function applyTheme(mode, animate) {
   const tc = document.querySelector('meta[name="theme-color"]');
   if (tc) tc.setAttribute('content', meta.color || (dark ? '#242424' : '#ffffff'));
 
-  // 外观页里也有一份主题分段控件，跟着顶栏按钮一起同步
-  const seg = document.querySelector('#apprTheme');
-  if (seg) {
-    seg.querySelectorAll('[data-theme-mode]').forEach((b) => {
-      const on = b.getAttribute('data-theme-mode') === m;
-      b.classList.toggle('active', on);
-      b.setAttribute('aria-pressed', on ? 'true' : 'false');
-    });
-  }
+  // 外观页的主题分段控件已 React 化：选中态由窗口级 __appearanceChanged 事件回流，
+  // 不再在这里直接操作 DOM
 }
 
 function cycleTheme() {
@@ -3869,13 +3837,7 @@ const APPR_VALUES = {
   readerLh: ['s', 'm', 'l'],
   readerWidth: ['s', 'm', 'l', 'full'],
 };
-const APPR_GROUP = {
-  accent: '#apprAccent',
-  fontSize: '#apprFontSize',
-  readerFont: '#apprReaderFont',
-  readerLh: '#apprReaderLh',
-  readerWidth: '#apprReaderWidth',
-};
+// 注：旧 APPR_GROUP 控件选择器表随外观面板 React 化移除（React 侧自行渲染控件）
 
 // 单一可信源：优先服务端注入的 window.__APPEARANCE__，缺省回落默认（登录页等无注入场景）
 function sanitizeAppearanceLocal(raw) {
@@ -3918,39 +3880,14 @@ function saveAppearance(pref) {
   saveUserPrefs();
 }
 
-/** 写进 <html> 属性（样式全挂在属性选择器上）+ 回填控件选中态 */
+/** 写进 <html> 属性（样式全挂在属性选择器上）。
+ *  控件选中态自 v1.3.0 起由 React 外观面板（src/settings/AppearancePane.jsx）从
+ *  偏好数据直接推导、不再回写 DOM；末尾派发 __appearanceChanged 通知面板同步，
+ *  覆盖顶栏主题按钮、恢复默认、localStorage 迁移等一切外部改动。 */
 function applyAppearance(pref) {
   const el = document.documentElement;
   Object.keys(APPR_ATTR).forEach((k) => el.setAttribute(APPR_ATTR[k], pref[k]));
-  Object.keys(APPR_GROUP).forEach((k) => {
-    const box = document.querySelector(APPR_GROUP[k]);
-    if (!box) return;
-    box.querySelectorAll('[' + APPR_ATTR[k] + ']').forEach((b) => {
-      const on = b.getAttribute(APPR_ATTR[k]) === pref[k];
-      b.classList.toggle('active', on);
-      b.setAttribute('aria-pressed', on ? 'true' : 'false');
-    });
-  });
-
-  // 主色调板的联动：GitHub 主题下整套禁用，并把「选中」退还真实主色调用板值
-  // （不能把 GitHub 蓝显示成选中态，那样用户会以为 6 套里真有这一套）
-  const fixed = el.getAttribute('data-fixed-accent') === 'github';
-  const sw = document.querySelector('#apprAccent');
-  if (sw) {
-    sw.classList.toggle('disabled', fixed);
-    sw.querySelectorAll('.swatch').forEach((b) => {
-      const on = !fixed && b.getAttribute('data-accent') === pref.accent;
-      b.classList.toggle('active', on);
-      b.setAttribute('aria-pressed', on ? 'true' : 'false');
-      b.setAttribute('aria-disabled', fixed ? 'true' : 'false');
-    });
-  }
-  const hint = document.querySelector('#apprAccentHint');
-  if (hint) {
-    hint.textContent = fixed
-      ? 'GitHub 暗黑是整套配色包，主色固定为 GitHub 蓝，切换主题后即可调整'
-      : '中性底色只有一套且已校准，这里只换强调色';
-  }
+  window.dispatchEvent(new Event('__appearanceChanged'));
 }
 
 function setAppearance(key, value) {
@@ -3961,38 +3898,17 @@ function setAppearance(key, value) {
   applyAppearance(pref);
 }
 
-Object.keys(APPR_GROUP).forEach((k) => {
-  const box = document.querySelector(APPR_GROUP[k]);
-  if (!box) return;
-  box.addEventListener('click', (ev) => {
-    // GitHub 主题自带主色，整套调板禁用（连点也不改）
-    if (box === document.querySelector('#apprAccent') && document.documentElement.getAttribute('data-fixed-accent') === 'github') return;
-    const btn = ev.target.closest('[' + APPR_ATTR[k] + ']');
-    if (!btn || !box.contains(btn)) return;
-    setAppearance(k, btn.getAttribute(APPR_ATTR[k]));
-  });
-});
+// 外观面板的控件点击 / 「恢复默认」已 React 化：经桥 setAppearance / resetAppearance
+// 回调到这里，状态与持久化逻辑不变，仅 DOM 绑定移除
 
-// 主题模式在外观页也有一份分段控件，跟顶栏那个按钮是同一份状态
-const apprThemeBox = document.querySelector('#apprTheme');
-if (apprThemeBox) {
-  apprThemeBox.addEventListener('click', (ev) => {
-    const btn = ev.target.closest('[data-theme-mode]');
-    if (!btn || !apprThemeBox.contains(btn)) return;
-    applyTheme(btn.getAttribute('data-theme-mode'), true);
-  });
-}
-
-const apprResetBtn = $('#apprResetBtn');
-if (apprResetBtn) {
-  apprResetBtn.addEventListener('click', () => {
-    // 「恢复默认」把主题一并带回「跟随系统」，避免默认主色 + GitHub 主题的错配
-    appearancePref = Object.assign({}, APPR_DEFAULTS);
-    saveAppearance(appearancePref);
-    applyTheme('auto', true);
-    applyAppearance(readAppearance());
-    toast('外观已恢复默认');
-  });
+/** 恢复默认外观（React 外观面板的「恢复默认」按钮经桥调用）：
+ *  主题一并带回「跟随系统」，避免默认主色 + GitHub 主题的错配 */
+function resetAppearance() {
+  appearancePref = Object.assign({}, APPR_DEFAULTS);
+  saveAppearance(appearancePref);
+  applyTheme('auto', true);
+  applyAppearance(readAppearance());
+  toast('外观已恢复默认');
 }
 
 applyAppearance(readAppearance());
@@ -4297,11 +4213,12 @@ function isTypingTarget(el) {
   return t === 'INPUT' || t === 'TEXTAREA' || t === 'BUTTON' || t === 'SELECT' || t === 'A' || el.isContentEditable;
 }
 document.addEventListener('keydown', (ev) => {
-  // 面板开着时不响应 j/k（命令面板已 React 化，通过 window.__cmdkOpen 同步开合状态）
-  if (window.__cmdkOpen) return;
+  // 面板开着时不响应 j/k（命令面板 / 设置弹层均已 React 化，
+  // 通过 window.__cmdkOpen / window.__settingsOpen 同步开合状态）
+  if (window.__cmdkOpen || window.__settingsOpen) return;
   if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
   if (isTypingTarget(document.activeElement)) return;
-  if (!settingsMask.hidden || !lightbox.hidden) return;
+  if (window.__settingsOpen || !lightbox.hidden) return;
   const items = kbdItems();
   if (ev.key === 'j' || ev.key === 'k') {
     ev.preventDefault();
@@ -4379,4 +4296,9 @@ window.shiyue = {
   THEME_MODES, THEME_META,
   refresh: () => { const b = $('#refreshBtn'); if (b) b.click(); },
   scrollTop: () => window.scrollTo({ top: 0, behavior: prefersReducedMotion() ? 'auto' : 'smooth' }),
+  // —— v1.3.0 起 React 化组件的桥接面（设置弹层 / 外观 / 关于） ——
+  apiFetch, isAdmin,
+  lockPageScroll, unlockPageScroll, stopStatusPolling,
+  settingsTabEffect, getLegacySettingsPane, getSettingsSummary,
+  getAppearance: readAppearance, setAppearance, resetAppearance,
 };

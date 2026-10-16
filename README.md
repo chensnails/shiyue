@@ -87,7 +87,7 @@ server.js  ── 单进程 HTTP 服务：路由 / 静态资源 / 定时调度
 | --- | --- |
 | `server.js` / `db.js` / `rss.js` / `digest.js` / `proxy.js` | 后端 |
 | `index.html` / `login.html` | 前端入口（Vite 多页面双入口） |
-| `src/` | React 组件（渐进迁移中，如 `src/cmdk/` 命令面板） |
+| `src/` | React 组件（渐进迁移中：`src/cmdk/` 命令面板、`src/settings/` 设置弹层） |
 | `public/` | 静态资源与旧交互（`app.js` / `style.css` / `sw.js`，构建时原样拷入 dist） |
 | `tools/gen-theme.mjs` | 生成并校验主题配色 |
 | `docker-compose.yml` / `Dockerfile` | 编排与构建 |

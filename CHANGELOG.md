@@ -18,6 +18,19 @@
 
 ---
 
+## [1.3.0] — 2026-10-16
+
+新增：
+
+- **设置弹层 React 化**（React 渐进式迁移的 P2a 阶段）：
+  - 弹层外壳（遮罩 / 标题 / tab 栏 / 关闭）与「外观」「关于」两个面板迁往 `src/settings/`，键位、类名、data 属性与 aria 全部保留，视觉与交互无变化。
+  - 「数据源 / 模型 / 账号 / 状态」四个面板暂由旧 DOM 承接：装在 `#legacyPanes` 隐藏容器中，选中对应 tab 时由 React 外壳搬进 `.tab-pane-legacy` 插槽显示（移动节点，旧监听与 ID 全部保留，行为零变化），随后续版本逐个迁移后移除。
+  - 旧 `openSettings` / `closeSettings` 委托给 React 宿主（`window.__settingsHost`），开合状态经 `window.__settingsOpen` 同步给 Escape 关闭 / j·k 键盘导航 / 自动刷新守卫；tab 切换副作用（表单加载、状态轮询启停）经 `window.shiyue.settingsTabEffect` 桥接。
+  - 外观面板改造中顺势清理了落后实现：控件选中态不再由旧 `applyAppearance` 回写 DOM，React 从偏好数据直接推导；「GitHub 主题固定主色」不再轮询 `<html data-fixed-accent>`，由 `theme === 'github'` 等价推导；外部改动（顶栏主题按钮、恢复默认、localStorage 迁移）经 `window.__appearanceChanged` 事件回流同步。
+  - 副标题（订阅源统计）提取为纯函数 `getSettingsSummary()`，宿主打开弹层与 `updateSourceSummary()` 共用同一份计算。
+
+---
+
 ## [1.2.0] — 2026-10-16
 
 新增：
