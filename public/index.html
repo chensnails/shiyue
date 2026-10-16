@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>拾阅</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#ffffff">
+<!-- 可安装到手机（Edge / Chrome「添加到手机」，iOS「添加到主屏幕」）-->
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="拾阅">
+<meta name="format-detection" content="telephone=no">
+<script>
+/* 外观偏好：主题模式 + 主色调 + 字号 + 阅读字体 / 行高 / 阅读宽度。
+   必须在样式表之前把这些属性写到 <html> 上，否则首屏会先按默认值画一遍再跳一下。
+   取值合法性也在这里兜一层：localStorage 是用户可改的，脏值不该让页面崩掉。 */
+(function () {
+  var el = document.documentElement;
+  // 优先用服务端按账号注入的外观（window.__APPEARANCE__）；登录页等无注入时回退本机旧值，再回退默认
+  var sa = window.__APPEARANCE__ || null;
+  var lsGet = function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } };
+  var pick = function (v, list, dflt) { return list.indexOf(v) >= 0 ? v : dflt; };
+  var ACCENTS = ['blue', 'violet', 'teal', 'green', 'amber', 'rose'];
+
+  var mode = 'auto';
+  if (sa && typeof sa.theme === 'string') mode = sa.theme;
+  else { var lm = lsGet('shiyue.theme.v1'); if (lm) mode = lm; }
+  if (['auto', 'light', 'dark', 'github'].indexOf(mode) < 0) mode = 'auto';
+  el.setAttribute('data-theme-mode', mode);
+  // github 是整包主题，不进「跟随系统」；data-theme 直接写 github 走另一套 CSS 变量块
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  var dark = mode === 'dark' || (mode === 'auto' && mq.matches);
+  el.setAttribute('data-theme', mode === 'github' ? 'github' : (dark ? 'dark' : 'light'));
+
+  // 主色调：github 主题写死 GitHub 蓝；其余用账号保存的值（无则用本机旧值）
+  var accent = (sa && typeof sa.accent === 'string') ? sa.accent : (lsGet('shiyue.appearance.accent.v1') || 'blue');
+  el.setAttribute('data-accent', mode === 'github' ? 'github' : pick(accent, ACCENTS, 'blue'));
+
+  var ap = sa || {};
+  el.setAttribute('data-font-size', pick(ap.fontSize, ['s', 'm', 'l'], 'm'));
+  el.setAttribute('data-reader-font', pick(ap.readerFont, ['sans', 'serif'], 'sans'));
+  el.setAttribute('data-reader-lh', pick(ap.readerLh, ['s', 'm', 'l'], 'm'));
+  el.setAttribute('data-reader-width', pick(ap.readerWidth, ['s', 'm', 'l', 'full'], 'm'));
+})();
+</script>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<svg class="sprite" aria-hidden="true" focusable="false" width="0" height="0" style="position:absolute">
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20.5 12a8.5 8.5 0 1 1-2.9-6.4"/><path d="M20.5 3.5v5h-5"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3.5v11"/><path d="M7.5 10 12 14.5 16.5 10"/><path d="M4.5 16.5v2A2.5 2.5 0 0 0 7 21h10a2.5 2.5 0 0 0 2.5-2.5v-2"/></symbol>
+  <symbol id="i-theme-auto" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17Z" fill="currentColor"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.5 14.6A8.6 8.6 0 0 1 9.4 3.5a8.6 8.6 0 1 0 11.1 11.1Z"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.1"/><path d="M19.3 14.9a1.6 1.6 0 0 0 .32 1.77l.06.06a1.95 1.95 0 1 1-2.76 2.76l-.06-.06a1.6 1.6 0 0 0-1.77-.32 1.6 1.6 0 0 0-.97 1.47v.17a1.95 1.95 0 1 1-3.9 0v-.09a1.6 1.6 0 0 0-1.05-1.47 1.6 1.6 0 0 0-1.77.32l-.06.06a1.95 1.95 0 1 1-2.76-2.76l.06-.06a1.6 1.6 0 0 0 .32-1.77 1.6 1.6 0 0 0-1.47-.97h-.17a1.95 1.95 0 1 1 0-3.9h.09a1.6 1.6 0 0 0 1.47-1.05 1.6 1.6 0 0 0-.32-1.77l-.06-.06a1.95 1.95 0 1 1 2.76-2.76l.06.06a1.6 1.6 0 0 0 1.77.32h.08a1.6 1.6 0 0 0 .97-1.47v-.17a1.95 1.95 0 1 1 3.9 0v.09a1.6 1.6 0 0 0 .97 1.47 1.6 1.6 0 0 0 1.77-.32l.06-.06a1.95 1.95 0 1 1 2.76 2.76l-.06.06a1.6 1.6 0 0 0-.32 1.77v.08a1.6 1.6 0 0 0 1.47.97h.17a1.95 1.95 0 1 1 0 3.9h-.09a1.6 1.6 0 0 0-1.47.97Z"/></symbol>
+  <symbol id="i-github" viewBox="0 0 24 24"><path d="M12 2.2a9.8 9.8 0 0 0-3.1 19.1c.49.09.67-.21.67-.47v-1.86c-2.73.6-3.3-1.17-3.3-1.17-.45-1.13-1.1-1.43-1.1-1.43-.9-.61.07-.6.07-.6 1 .07 1.53 1.02 1.53 1.02.88 1.51 2.32 1.07 2.88.82.09-.64.35-1.08.63-1.33-2.18-.25-4.47-1.09-4.47-4.85 0-1.07.38-1.95 1.02-2.63-.1-.25-.45-1.26.1-2.63 0 0 .83-.27 2.72 1a9.4 9.4 0 0 1 4.94 0c1.89-1.27 2.71-1 2.71-1 .55 1.37.2 2.38.1 2.63.64.68 1.02 1.56 1.02 2.63 0 3.77-2.3 4.6-4.49 4.84.35.31.67.9.67 1.82v2.7c0 .26.18.57.68.47A9.8 9.8 0 0 0 12 2.2Z"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16.2 16.2 21 21"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7.2" height="7.2" rx="1.8"/><rect x="13.3" y="3.5" width="7.2" height="7.2" rx="1.8"/><rect x="3.5" y="13.3" width="7.2" height="7.2" rx="1.8"/><rect x="13.3" y="13.3" width="7.2" height="7.2" rx="1.8"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6.5h11M9 12h11M9 17.5h11"/><circle cx="4.8" cy="6.5" r="1.1"/><circle cx="4.8" cy="12" r="1.1"/><circle cx="4.8" cy="17.5" r="1.1"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M3.5 13 6 5.8A2 2 0 0 1 7.9 4.5h8.2A2 2 0 0 1 18 5.8L20.5 13v4.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z"/><path d="M3.5 13h4.6l1 2.4h5.8l1-2.4h4.6"/></symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="M5.5 8.5 12 15.5l6.5-7"/></symbol>
+  <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="M8.5 5.5 15.5 12l-7 6.5"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-accordion" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="6.2" rx="2"/><path d="M3.5 14.6h17M3.5 19h11"/></symbol>
+  <symbol id="i-check-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8.2 12.4 10.9 15l4.9-5.4"/></symbol>
+  <symbol id="i-chevrons-up" viewBox="0 0 24 24"><path d="M6.5 13.5 12 8l5.5 5.5"/><path d="M6.5 19 12 13.5 17.5 19"/></symbol>
+  <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 20V5"/><path d="M6.5 10.5 12 5l5.5 5.5"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5 9.5 17 19 7.5"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="8.6" cy="9.6" r="1.6"/><path d="M4.5 17.5 9.5 12.5l3.6 3.6 2.6-2.2 4.3 4.3"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10.4 13.6a4.2 4.2 0 0 0 5.9 0l2.4-2.4a4.2 4.2 0 1 0-5.9-5.9l-1.2 1.2"/><path d="M13.6 10.4a4.2 4.2 0 0 0-5.9 0l-2.4 2.4a4.2 4.2 0 1 0 5.9 5.9l1.2-1.2"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 2.8 19.5h18.4Z"/><path d="M12 10v4.2"/><path d="M12 17.4h.01"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 6.8h16"/><path d="M9.5 6.8V4.9a1.4 1.4 0 0 1 1.4-1.4h2.2a1.4 1.4 0 0 1 1.4 1.4v1.9"/><path d="M6.6 6.8l.9 12.4A1.9 1.9 0 0 0 9.4 21h5.2a1.9 1.9 0 0 0 1.9-1.8l.9-12.4"/><path d="M10.5 10.6v6.4M13.5 10.6v6.4"/></symbol>
+  <symbol id="i-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3.4l2.65 5.4 5.95.87-4.3 4.2 1.02 5.93L12 17l-5.32 2.8 1.02-5.93-4.3-4.2 5.95-.87Z" fill="currentColor"/></symbol>
+  <symbol id="i-star-o" viewBox="0 0 24 24"><path d="M12 3.4l2.65 5.4 5.95.87-4.3 4.2 1.02 5.93L12 17l-5.32 2.8 1.02-5.93-4.3-4.2 5.95-.87Z"/></symbol>
+  <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M11 3.6l1.75 4.55 4.55 1.75-4.55 1.75L11 16.2 9.25 11.65 4.7 9.9l4.55-1.75Z"/><path d="M18 14.8l.85 2.15L21 17.8l-2.15.85L18 20.8l-.85-2.15L15 17.8l2.15-.85Z"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8Z"/><path d="M14 3.5V8h4.5"/></symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17"/><path d="M8 3.2v3.6M16 3.2v3.6"/></symbol>
+  <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4.5h5.5V10"/><path d="M19.5 4.5 11 13"/><path d="M18 14.5v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-10a2 2 0 0 1 2-2h4"/></symbol>
+  <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3.5a8.5 8.5 0 0 0 0 17c.9 0 1.63-.73 1.63-1.63 0-.44-.17-.84-.45-1.14-.29-.3-.46-.7-.46-1.14 0-.9.73-1.63 1.63-1.63h1.2a4.45 4.45 0 0 0 4.45-4.45c0-3.9-3.6-7.01-8-7.01Z"/><circle cx="7.6" cy="12.4" r="1.15" fill="currentColor" stroke="none"/><circle cx="9.7" cy="8.4" r="1.15" fill="currentColor" stroke="none"/><circle cx="14.2" cy="7.9" r="1.15" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-type-size" viewBox="0 0 24 24"><path d="M3 19 8 5l5 14"/><path d="M4.7 14.5h6.6"/><path d="M20.5 10v9"/><path d="M17.5 13h6"/></symbol>
+  <symbol id="i-width" viewBox="0 0 24 24"><path d="M3.5 12h17"/><path d="M7 8.5 3.5 12 7 15.5"/><path d="M17 8.5 20.5 12 17 15.5"/></symbol>
+  <symbol id="i-line-height" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/><path d="M20 5v14"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19.5 8.5a2 2 0 0 0-2.83-2.83L5 17v3Z"/><path d="M14.5 7.5l2 2"/></symbol>
+</svg>
+
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <div class="brand">
+      <svg class="brand-logo" viewBox="0 0 64 64" role="img" aria-label="拾阅"><rect width="64" height="64" rx="15" style="fill: var(--accent)"/><rect x="8" y="17" width="33" height="37" rx="6" fill="#ffffff"/><rect x="15" y="25" width="19" height="5" rx="2.5" style="fill: var(--accent)"/><rect x="15" y="35" width="12" height="5" rx="2.5" style="fill: var(--accent)"/><rect x="15" y="45" width="16" height="5" rx="2.5" style="fill: var(--accent)"/><path d="M51.5 6 l2.9 7.1 7.1 2.9 -7.1 2.9 -2.9 7.1 -2.9 -7.1 -7.1 -2.9 7.1 -2.9 z" fill="#ffffff"/></svg>
+      <div class="brand-text">
+        <h1>拾阅</h1>
+        <p id="subtitle">正在加载频道…</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <nav class="viewnav" id="viewNav">
+        <button class="viewnav-btn active" data-view="reader">文章</button>
+        <button class="viewnav-btn" data-view="cards">卡片</button>
+        <button class="viewnav-btn" data-view="ai">AI</button>
+      </nav>
+      <div class="stat" id="stat">
+        <span id="statCount">—</span>
+        <small>条资源</small>
+      </div>
+      <button class="btn btn-ghost" id="refreshBtn" title="重新拉取">
+        <svg class="ico" aria-hidden="true" focusable="false"><use href="#i-refresh"/></svg><span class="btn-label">刷新</span>
+      </button>
+      <button class="btn btn-ghost btn-icon install-trigger" id="installBtn" title="添加到手机" aria-label="添加到手机" hidden>
+        <svg class="ico" aria-hidden="true" focusable="false"><use href="#i-download"/></svg>
+      </button>
+      <button class="btn btn-ghost btn-icon" id="themeBtn" title="主题：跟随系统" aria-label="切换主题">
+        <svg class="ico" id="themeIco" aria-hidden="true" focusable="false"><use href="#i-theme-auto"/></svg>
+      </button>
+      <button class="btn btn-ghost" id="settingsBtn" title="设置">
+        <svg class="ico" aria-hidden="true" focusable="false"><use href="#i-settings"/></svg><span class="btn-label">设置</span>
+      </button>
+    </div>
+  </div>
+</header>
+
+<!-- 卡片：默认隐藏，由 switchView 决定显示哪个页面（默认是「文章」） -->
+<div id="cardsView" hidden>
+<div class="wrap toolbar">
+  <div class="search-box">
+    <svg class="search-ico" aria-hidden="true" focusable="false"><use href="#i-search"/></svg>
+    <input id="searchInput" name="q" type="search" placeholder="搜索资源名称、描述或标签…（服务端检索）" autocomplete="off">
+  </div>
+  <select id="feedSelect" class="select" title="频道筛选">
+    <option value="">全部频道</option>
+  </select>
+  <select id="sortSelect" class="select" title="排序">
+    <option value="new">最新发布</option>
+    <option value="old">最早上架</option>
+    <option value="name">名称排序</option>
+  </select>
+  <select id="sizeSelect" class="select" title="体积筛选">
+    <option value="all">全部体积</option>
+    <option value="small">≤ 1G</option>
+    <option value="mid">1G ~ 20G</option>
+    <option value="big">&gt; 20G</option>
+  </select>
+  <div class="viewmode" id="viewMode" role="group" aria-label="视图模式">
+    <button class="viewmode-btn active" type="button" data-mode="grid" title="卡片视图" aria-label="卡片视图"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-grid"/></svg></button>
+    <button class="viewmode-btn" type="button" data-mode="list" title="列表视图" aria-label="列表视图"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-list"/></svg></button>
+  </div>
+</div>
+
+<div class="wrap" id="tagBar"></div>
+
+<main class="wrap">
+  <div id="grid" class="grid"></div>
+  <div id="skeleton" class="grid" hidden></div>
+
+  <div id="empty" class="empty" hidden>
+    <div class="empty-ico"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-inbox"/></svg></div>
+    <p>没有找到匹配的资源</p>
+  </div>
+
+  <div class="loadmore-wrap">
+    <button class="btn btn-primary" id="loadMoreBtn" hidden>加载更多</button>
+    <div class="loading-dots" id="loadingMore" hidden><i></i><i></i><i></i></div>
+  </div>
+
+  <footer class="foot">
+    拾阅 · RSS 直连聚合 · 数据存于 PostgreSQL
+  </footer>
+</main>
+</div><!-- /cardsView -->
+
+<!-- 文章：左频道 / 右文章，点标题展开全文 -->
+<div class="wrap reader" id="readerView">
+  <div class="reader-mask" id="readerMask"></div>
+  <aside class="reader-side" id="readerSide">
+    <div class="reader-side-head">
+      <span>频道</span>
+      <span class="reader-side-n" id="readerSideN"></span>
+      <button class="reader-side-close" id="readerSideClose" type="button" aria-label="收起频道列表"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-x"/></svg></button>
+    </div>
+    <nav class="reader-channels" id="readerChannels"></nav>
+  </aside>
+
+  <section class="reader-main">
+    <div class="reader-head">
+      <button class="btn btn-ghost btn-sm reader-menu-btn" id="readerMenuBtn" type="button" aria-label="打开频道列表">
+        <svg class="ico" aria-hidden="true" focusable="false"><use href="#i-menu"/></svg> 频道
+      </button>
+      <div class="reader-head-text">
+        <h2 id="readerTitle">全部频道</h2>
+      </div>
+      <div class="reader-head-tools">
+        <!-- 手风琴开关：展开新文章时自动收起上一篇。只由点击触发，不监听失焦，
+             否则点图片看大图 / 复制正文 / 切到别的 App 都会被误判成「离开了」 -->
+        <button class="btn btn-ghost btn-sm" id="readerAccBtn" type="button" aria-pressed="true"
+                title="单篇展开：展开一篇时自动收起上一篇（点这里切换）">
+          <svg class="ico" aria-hidden="true" aria-hidden="true" focusable="false"><use href="#i-accordion"/></svg><span class="btn-label" id="readerAccLabel">单篇</span>
+        </button>
+        <button class="btn btn-ghost btn-sm" id="readerReadAllBtn" type="button" hidden title="把当前列表全部标为已读">
+          <svg class="ico" aria-hidden="true" aria-hidden="true" focusable="false"><use href="#i-check-circle"/></svg><span class="btn-label">全部已读</span>
+        </button>
+        <button class="btn btn-ghost btn-sm" id="readerCollapseAll" type="button" hidden title="收起所有展开的文章">
+          <svg class="ico" aria-hidden="true" aria-hidden="true" focusable="false"><use href="#i-chevrons-up"/></svg><span class="btn-label">全部收起</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="reader-search">
+      <svg class="search-ico" aria-hidden="true" focusable="false"><use href="#i-search"/></svg>
+      <input id="readerSearch" name="rq" type="search" placeholder="搜索标题、描述或标签…（服务端检索）" autocomplete="off" enterkeyhint="search" aria-label="搜索文章">
+      <button class="reader-search-clear" id="readerSearchClear" type="button" hidden aria-label="清除搜索"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-x"/></svg></button>
+    </div>
+
+    <div class="reader-list" id="readerList"></div>
+
+    <div class="empty" id="readerEmpty" hidden>
+      <div class="empty-ico"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-inbox"/></svg></div>
+      <p>这里还没有内容</p>
+    </div>
+
+    <div class="loadmore-wrap">
+      <div class="loading-dots" id="readerMore" hidden><i></i><i></i><i></i></div>
+      <!-- 滚动到它附近就自动加载下一页（IntersectionObserver 观察） -->
+      <div class="reader-sentinel" id="readerSentinel" aria-hidden="true"></div>
+    </div>
+
+    <footer class="foot">点标题展开全文，再点一次收起</footer>
+  </section>
+</div>
+
+<!-- AI：大模型能力聚合页。日报是第一个子页，后面加新功能就往 #aiNav 里再加一项 -->
+<div class="wrap" id="aiView" hidden>
+  <div class="ai-head">
+    <h2>AI</h2>
+    <nav class="ainav" id="aiNav" aria-label="AI 功能">
+      <button class="ainav-btn active" type="button" data-ai="digest">日报</button>
+      <button class="ainav-btn" type="button" data-ai="settings">日报设置</button>
+    </nav>
+  </div>
+
+  <!-- 子页：日报 -->
+  <section class="ai-pane" data-ai-pane="digest">
+    <div class="digest-head">
+      <p class="ai-sub" id="digestSub">把已开启采集的频道过去 24 小时的新条目整理成一份中文简报</p>
+      <div class="digest-actions">
+        <select id="digestDate" class="select" title="选择日期"></select>
+        <button class="btn btn-ghost" id="regenDigestBtn" title="忽略缓存，重新生成">重新生成</button>
+        <button class="btn btn-primary" id="genDigestBtn">生成摘要</button>
+      </div>
+    </div>
+    <div id="digestBody"></div>
+    <footer class="foot">
+      摘要由大模型生成，可能存在偏差，请以原始条目为准
+    </footer>
+  </section>
+
+  <!-- 子页：日报设置（从设置弹层搬过来的，独立成子页好给后面的 AI 功能腾地方） -->
+  <section class="ai-pane" data-ai-pane="settings" hidden>
+    <!-- 保存结果放在分组外面，收起任何一组都能看到 -->
+    <div class="test-result" id="dgResult"></div>
+
+    <details class="sec" data-sec="dg-auto" open>
+      <summary class="sec-head">
+        <svg class="sec-arrow" aria-hidden="true" focusable="false"><use href="#i-chevron-right"/></svg>
+        <span class="sec-title">自动生成</span>
+        <span class="sec-sub" id="dgAutoSub"></span>
+      </summary>
+      <div class="sec-body">
+        <div class="form-row form-row-inline">
+          <label for="dgEnabled">每日自动生成</label>
+          <label class="switch">
+            <input id="dgEnabled" type="checkbox">
+            <span class="switch-slider"></span>
+          </label>
+          <small class="form-tip">开启后按下方时间自动生成，需保持服务运行</small>
+        </div>
+        <div class="form-row">
+          <label for="dgTime">生成时间（北京时间）</label>
+          <input id="dgTime" type="time" value="08:00">
+        </div>
+        <div class="form-row">
+          <label for="dgScope">摘要范围</label>
+          <select id="dgScope" class="select">
+            <option value="selected">仅「采集」开启的频道</option>
+            <option value="all">全部频道</option>
+          </select>
+          <small class="form-tip">「采集」开关在「设置 → 数据源」页，按频道单独控制</small>
+        </div>
+      </div>
+    </details>
+
+    <details class="sec" data-sec="dg-limits" open>
+      <summary class="sec-head">
+        <svg class="sec-arrow" aria-hidden="true" focusable="false"><use href="#i-chevron-right"/></svg>
+        <span class="sec-title">条数与保留</span>
+        <span class="sec-sub" id="dgLimitsSub"></span>
+      </summary>
+      <div class="sec-body">
+        <div class="form-grid">
+          <div class="form-row">
+            <label for="dgMaxPerFeed">每频道条数上限</label>
+            <input id="dgMaxPerFeed" type="number" min="1" max="100" value="20">
+          </div>
+          <div class="form-row">
+            <label for="dgMaxTotal">总条数上限</label>
+            <input id="dgMaxTotal" type="number" min="10" max="500" value="150">
+          </div>
+          <div class="form-row">
+            <label for="dgKeepDays">摘要保留天数</label>
+            <input id="dgKeepDays" type="number" min="1" max="365" value="30">
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <div class="ai-foot">
+      <span class="hint" id="dgHint"></span>
+      <button class="btn btn-primary" id="saveDgBtn">保存日报设置</button>
+    </div>
+  </section>
+</div>
+
+<!-- 设置面板 -->
+<div class="modal-mask" id="settingsMask" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div class="modal-head">
+      <div>
+        <h2 id="settingsTitle">设置</h2>
+        <p class="modal-sub" id="settingsSummary">加载中…</p>
+      </div>
+      <button class="modal-close" id="settingsClose" aria-label="关闭"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-x"/></svg></button>
+    </div>
+
+    <div class="tabs" id="tabs">
+      <button class="tab active" data-tab="source">数据源</button>
+      <button class="tab" data-tab="model">模型</button>
+      <button class="tab" data-tab="account">账号</button>
+      <button class="tab" data-tab="appearance">外观</button>
+      <button class="tab" data-tab="status">状态</button>
+    </div>
+
+    <div class="modal-body">
+
+      <!-- 数据源：RSS 订阅。整块只有一个滚动容器（.pane-scroll），
+           里面用可折叠分组切块，避免频道一多页面就长得看不到头 -->
+      <section class="tab-pane" data-pane="source">
+        <div class="pane-scroll">
+
+          <!-- 添加订阅：高频动作，常显，不折进分组里 -->
+          <div class="source-add">
+            <div class="input-with-btn">
+              <input id="rssUrl" type="url" placeholder="粘贴 RSS / Atom 地址" spellcheck="false" autocomplete="off">
+              <button class="btn btn-primary" id="addFeedBtn" type="button">添加</button>
+            </div>
+            <div class="source-add-foot">
+              <small class="form-tip">
+                支持 RSS 2.0 / Atom，例如 <code>https://rsshub.app/telegram/channel/example</code>
+              </small>
+              <button class="btn" id="importOpmlBtn" type="button">导入 OPML</button>
+              <button class="btn" id="exportOpmlBtn" type="button">导出 OPML</button>
+              <input type="file" id="opmlFile" accept=".opml,application/xml,text/xml" hidden>
+            </div>
+            <div class="test-result" id="feedResult"></div>
+          </div>
+
+          <!-- 采集参数：设置一次就不常动，默认收起；收起时标题右侧直接显示当前值 -->
+          <details class="sec" data-sec="src-params">
+            <summary class="sec-head">
+              <svg class="sec-arrow" aria-hidden="true" focusable="false"><use href="#i-chevron-right"/></svg>
+              <span class="sec-title">采集参数</span>
+              <span class="sec-sub" id="srcParamsSub"></span>
+            </summary>
+            <div class="sec-body">
+              <div class="source-opts">
+                <label for="srcRefresh">自动抓取
+                  <select id="srcRefresh" class="select">
+                    <option value="5">每 5 分钟</option>
+                    <option value="10">每 10 分钟</option>
+                    <option value="20">每 20 分钟</option>
+                    <!-- selected 是兜底：万一表单没被配置填充，也不该静默存成「每 5 分钟」 -->
+                    <option value="30" selected>每 30 分钟</option>
+                    <option value="60">每 1 小时</option>
+                    <option value="180">每 3 小时</option>
+                    <option value="360">每 6 小时</option>
+                    <option value="720">每 12 小时</option>
+                    <option value="1440">每天</option>
+                  </select>
+                </label>
+                <label for="srcKeep">每频道保留
+                  <input id="srcKeep" type="number" min="0" max="5000" step="20" value="300" placeholder="0 = 不限"> 条
+                </label>
+                <label for="srcKeepDays">最长保留
+                  <select id="srcKeepDays" class="select">
+                    <option value="0">不限时长</option>
+                    <option value="30">1 个月</option>
+                    <option value="90">3 个月</option>
+                    <option value="180">半年</option>
+                    <option value="365">1 年</option>
+                    <option value="730">2 年</option>
+                    <option value="1095">3 年</option>
+                    <option value="1825">5 年</option>
+                  </select>
+                </label>
+                <label for="srcTimeout">抓取超时
+                  <input id="srcTimeout" type="number" min="5" max="120" step="5" value="25"> 秒
+                </label>
+                <label for="srcConcurrency">抓取并发
+                  <input id="srcConcurrency" type="number" min="1" max="10" step="1" value="3"> 个
+                </label>
+                <label for="srcProxy" class="src-proxy-row">出网代理
+                  <input id="srcProxy" type="text" placeholder="留空 = 直连" autocomplete="off" spellcheck="false">
+                </label>
+                <label for="srcAutoRefresh">页面自动刷新
+                  <select id="srcAutoRefresh" class="select">
+                    <option value="0">关闭</option>
+                    <option value="1">每 1 分钟</option>
+                    <option value="5">每 5 分钟</option>
+                    <option value="15">每 15 分钟</option>
+                    <option value="30">每 30 分钟</option>
+                  </select>
+                </label>
+              </div>
+              <small class="form-tip">
+                条目同时受两个上限约束：每个频道最多保留上面「每频道保留」的条数，且发布时间早于「最长保留」的一律清理。
+                「每频道保留」填 0 表示无条数上限，只按时长清理；「最长保留」选「不限时长」则只按条数清理。两者都设上限才会同时生效。
+                收藏的条目不受这两条限制，不会被清理。
+                「自动抓取」是服务端去源站取新内容；「页面自动刷新」只是让打开的页面重新读一次列表，不触发抓取。
+                每个频道还能在下方单独指定抓取频率，未设置的跟随全局。
+                「出网代理」抓 RSS 和代理图片都走这里；支持 <code>http://</code>、<code>https://</code>、<code>socks5://</code>（含账号可写 <code>http://user:pass@host:port</code>）；留空走默认出网。保存后下次抓取生效。
+              </small>
+            </div>
+          </details>
+
+          <!-- 频道列表：日常最常看，默认展开 -->
+          <details class="sec" data-sec="src-feeds" open>
+            <summary class="sec-head">
+              <svg class="sec-arrow" aria-hidden="true" focusable="false"><use href="#i-chevron-right"/></svg>
+              <span class="sec-title">频道列表</span>
+              <span class="sec-sub" id="feedToolbarHint"></span>
+            </summary>
+            <div class="sec-body">
+              <div class="feed-list" id="feedList"></div>
+              <!-- 分组名建议列表：给每个频道行里的分组输入框用 -->
+              <datalist id="groupList"></datalist>
+            </div>
+          </details>
+
+        </div>
+
+        <div class="pane-foot">
+          <span class="hint" id="settingsHint"></span>
+          <div class="pane-foot-btns">
+            <button class="btn btn-ghost" id="refreshAllFeedsBtn">刷新全部</button>
+            <button class="btn btn-primary" id="saveSourceBtn">保存设置</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 模型 -->
+      <section class="tab-pane" data-pane="model" hidden>
+        <div class="form">
+          <div class="form-row">
+            <label for="llmBaseUrl">模型地址（OpenAI 兼容）</label>
+            <input id="llmBaseUrl" type="url" placeholder="https://api.siliconflow.cn/v1/chat/completions" spellcheck="false">
+            <small class="form-tip">支持任意 OpenAI 兼容接口；填到 <code>/v1</code> 或完整的 <code>/chat/completions</code> 均可</small>
+          </div>
+          <div class="form-row">
+            <label for="llmApiKey">API Key</label>
+            <div class="input-with-btn">
+              <input id="llmApiKey" type="password" placeholder="sk-..." spellcheck="false" autocomplete="off">
+              <button class="btn btn-ghost btn-sm" id="toggleLlmKey" type="button">显示</button>
+              <button class="btn btn-ghost btn-sm" id="clearLlmKey" type="button">清除</button>
+            </div>
+            <small class="form-tip" id="llmKeyHint">保存后不再回显明文，只显示掩码；留空即保持原值</small>
+          </div>
+          <div class="form-grid form-grid-2">
+            <div class="form-row">
+              <label for="llmModel">模型名称</label>
+              <input id="llmModel" type="text" placeholder="Qwen/Qwen3-8B" spellcheck="false" list="modelPresets">
+              <datalist id="modelPresets">
+                <option value="Qwen/Qwen3-8B"></option>
+                <option value="Qwen/Qwen3-30B-A3B-Instruct-2507"></option>
+                <option value="Qwen/Qwen3-235B-A22B-Instruct-2507"></option>
+                <option value="deepseek-ai/DeepSeek-V3"></option>
+                <option value="THUDM/GLM-4-9B-0414"></option>
+              </datalist>
+              <small class="form-tip">免费额度推荐 <strong>Qwen/Qwen3-8B</strong>；系统提示已内置 <code>/no_think</code> 关闭思考模式，速度更快</small>
+            </div>
+            <div class="form-row">
+              <label for="llmTemp">温度</label>
+              <input id="llmTemp" type="number" min="0" max="1.5" step="0.05" value="0.3">
+              <small class="form-tip">越低越稳定保守，越高越发散。摘要建议 0.2 ~ 0.5</small>
+            </div>
+          </div>
+          <div class="test-result" id="llmResult"></div>
+        </div>
+        <div class="pane-foot">
+          <span class="hint">这是你自己的模型配置，仅对当前账号生效（用于「日报」等 AI 功能）；留空的项会回退到站点默认模型</span>
+          <div class="pane-foot-btns">
+            <button class="btn btn-ghost" id="testLlmBtn">测试模型</button>
+            <button class="btn btn-primary" id="saveLlmBtn">保存模型</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 日报设置已经搬到「AI → 日报设置」子页，这里不再重复一份
+           （重复的 id 会让 $() 抓到错的那个）-->
+
+      <!-- 账号 -->
+      <section class="tab-pane" data-pane="account" hidden>
+        <div class="pane-scroll">
+          <div class="test-result" id="accResult"></div>
+
+          <details class="sec" data-sec="acc-login" open>
+            <summary class="sec-head">
+              <svg class="sec-arrow" aria-hidden="true" focusable="false"><use href="#i-chevron-right"/></svg>
+              <span class="sec-title">登录信息</span>
+              <span class="sec-sub" id="accSub"></span>
+            </summary>
+            <div class="sec-body">
+              <div class="form-row">
+                <label for="accUsername">用户名</label>
+                <input id="accUsername" type="text" spellcheck="false">
+              </div>
+              <div class="form-row">
+                <label for="accCurrent">当前密码 <span class="req">*</span></label>
+                <input id="accCurrent" type="password" placeholder="修改前需验证当前密码" autocomplete="current-password">
+              </div>
+              <div class="form-row">
+                <label for="accNew">新密码</label>
+                <input id="accNew" type="password" placeholder="留空则不修改，至少 4 位" autocomplete="new-password">
+              </div>
+            </div>
+          </details>
+
+          <!-- 用户管理：仅管理员可见（普通用户由 JS 隐藏整块） -->
+          <details class="sec" data-sec="acc-users" id="accUsersSec" hidden>
+            <summary class="sec-head">
+              <svg class="sec-arrow" aria-hidden="true" focusable="false"><use href="#i-chevron-right"/></svg>
+              <span class="sec-title">用户管理</span>
+              <span class="sec-sub" id="accUsersSub"></span>
+            </summary>
+            <div class="sec-body">
+              <div class="user-list" id="userList"></div>
+              <div class="user-add">
+                <input id="newUserName" type="text" placeholder="用户名" spellcheck="false" autocomplete="off">
+                <input id="newUserPass" type="password" placeholder="密码（至少 4 位）" autocomplete="new-password">
+                <select id="newUserRole" class="select" title="角色">
+                  <option value="user">普通用户</option>
+                  <option value="admin">管理员</option>
+                </select>
+                <button class="btn btn-primary btn-sm" id="addUserBtn" type="button">添加</button>
+              </div>
+              <small class="form-tip">
+                每个用户拥有<b>自己独立</b>的订阅源、已读/收藏、日报与模型配置。普通用户可配置自己的模型并阅读，但看不到「状态 / 采集参数 / 用户管理」等站点级设置；管理员额外可管理用户与全局设置。
+                删除用户会一并删除其订阅源、条目与日报，且不可恢复。
+              </small>
+              <div class="test-result" id="userResult"></div>
+            </div>
+          </details>
+
+          <!-- 装到桌面属于「看一次就够」的内容，默认收起 -->
+          <details class="sec" data-sec="acc-install">
+            <summary class="sec-head">
+              <svg class="sec-arrow" aria-hidden="true" focusable="false"><use href="#i-chevron-right"/></svg>
+              <span class="sec-title">添加到手机</span>
+              <span class="sec-sub">装到桌面，像 App 一样打开</span>
+            </summary>
+            <div class="sec-body">
+              <p class="install-card-tip">
+                用手机浏览器打开 <code id="installHost">本站</code>，在浏览器菜单里选「安装应用 / 添加到主屏幕」即可。<br>
+                Edge / Chrome：右上角「⋯」→ 添加到手机 / 安装应用；iOS Safari：分享 → 添加到主屏幕。
+              </p>
+              <button class="btn btn-ghost btn-sm install-trigger" type="button">一键安装（浏览器支持时）</button>
+            </div>
+          </details>
+        </div>
+
+        <div class="pane-foot">
+          <button class="btn btn-danger btn-sm" id="logoutBtn">退出登录</button>
+          <div class="pane-foot-btns">
+            <button class="btn btn-primary" id="saveAccBtn">保存账号</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 外观：纯前端偏好，只存本机 localStorage，不写服务端设置。
+           改完立即生效，不需要「保存」。 -->
+      <section class="tab-pane" data-pane="appearance" hidden>
+        <div class="pane-scroll">
+          <div class="appr">
+            <div class="appr-row">
+              <div class="appr-label">主题
+                <small>前三套可跟随系统；GitHub 暗黑是整套配色包，主色固定为 GitHub 蓝</small>
+              </div>
+              <div class="appr-ctl">
+                <div class="seg" id="apprTheme">
+                  <button class="seg-btn" type="button" data-theme-mode="auto">跟随系统</button>
+                  <button class="seg-btn" type="button" data-theme-mode="light">浅色</button>
+                  <button class="seg-btn" type="button" data-theme-mode="dark">CommaFeed 暗色</button>
+                  <button class="seg-btn" type="button" data-theme-mode="github">GitHub 暗黑</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="appr-row">
+              <div class="appr-label">主色调
+                <small id="apprAccentHint">中性底色只有一套且已校准，这里只换强调色</small>
+              </div>
+              <div class="appr-ctl">
+                <div class="swatches" id="apprAccent">
+                  <button class="swatch" type="button" data-accent="blue" title="蓝" aria-label="蓝"></button>
+                  <button class="swatch" type="button" data-accent="violet" title="靛紫" aria-label="靛紫"></button>
+                  <button class="swatch" type="button" data-accent="teal" title="青" aria-label="青"></button>
+                  <button class="swatch" type="button" data-accent="green" title="翠绿" aria-label="翠绿"></button>
+                  <button class="swatch" type="button" data-accent="amber" title="琥珀" aria-label="琥珀"></button>
+                  <button class="swatch" type="button" data-accent="rose" title="玫红" aria-label="玫红"></button>
+                </div>
+              </div>
+            </div>
+
+            <div class="appr-row">
+              <div class="appr-label">字号
+                <small>整站等比缩放，按钮、列表、设置一起变</small>
+              </div>
+              <div class="appr-ctl">
+                <div class="seg" id="apprFontSize">
+                  <button class="seg-btn" type="button" data-font-size="s">小</button>
+                  <button class="seg-btn" type="button" data-font-size="m">中</button>
+                  <button class="seg-btn" type="button" data-font-size="l">大</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="appr-row">
+              <div class="appr-label">正文字体
+                <small>只作用于文章正文，界面字体不变</small>
+              </div>
+              <div class="appr-ctl">
+                <div class="seg" id="apprReaderFont">
+                  <button class="seg-btn" type="button" data-reader-font="sans">无衬线</button>
+                  <button class="seg-btn" type="button" data-reader-font="serif">衬线</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="appr-row">
+              <div class="appr-label">正文行高</div>
+              <div class="appr-ctl">
+                <div class="seg" id="apprReaderLh">
+                  <button class="seg-btn" type="button" data-reader-lh="s">紧凑</button>
+                  <button class="seg-btn" type="button" data-reader-lh="m">标准</button>
+                  <button class="seg-btn" type="button" data-reader-lh="l">宽松</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="appr-row">
+              <div class="appr-label">阅读宽度
+                <small>越窄每行字数越少，读起来越省力</small>
+              </div>
+              <div class="appr-ctl">
+                <div class="seg" id="apprReaderWidth">
+                  <button class="seg-btn" type="button" data-reader-width="s">窄</button>
+                  <button class="seg-btn" type="button" data-reader-width="m">标准</button>
+                  <button class="seg-btn" type="button" data-reader-width="l">宽</button>
+                  <button class="seg-btn" type="button" data-reader-width="full">全宽</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 预览：不用切回文章页就能看出字号 / 字体 / 行高的效果 -->
+            <div class="appr-preview">
+              <p class="appr-preview-h">正文预览</p>
+              <p class="appr-preview-t" id="apprPreview">拾阅是一个自托管的 RSS 阅读站。这一段的字体、字号与行高会跟着上面的选择变，不用切回文章页反复试。</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="pane-foot">
+          <button class="btn btn-ghost btn-sm" id="apprResetBtn" type="button">恢复默认</button>
+          <span class="pane-foot-note">外观已存入你的账号，换设备也一致</span>
+        </div>
+      </section>
+
+      <!-- 状态：只读体检，不涉及任何配置。分组由 renderStatus() 动态生成 -->
+      <section class="tab-pane" data-pane="status" hidden>
+        <div class="status-body" id="statusBody"></div>
+        <div class="pane-foot">
+          <span class="hint" id="statusHint"></span>
+          <div class="pane-foot-btns">
+            <button class="btn btn-ghost" id="statusCopyBtn">复制诊断</button>
+            <button class="btn btn-primary" id="statusRefreshBtn">刷新</button>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<!-- 自动刷新发现了新内容、但用户已经滚下去了：先挂个浮标，点它才套用，避免列表在眼皮底下跳 -->
+<button class="new-pill" id="newPill" type="button" hidden>
+  <svg class="new-pill-ico" aria-hidden="true" focusable="false"><use href="#i-arrow-up"/></svg><span id="newPillText"></span>
+</button>
+
+<!-- 图片灯箱：点文章里的图片看大图，自适应屏幕，再点一下关闭 -->
+<div class="lightbox" id="lightbox" hidden role="dialog" aria-modal="true" aria-label="图片预览">
+  <img class="lightbox-img" id="lightboxImg" src="" alt="">
+  <p class="lightbox-hint">点击任意处关闭 · Esc 退出</p>
+</div>
+
+<!-- 顶部阅读进度条（滚动驱动，轻量高级感） -->
+<div class="read-progress" id="readProgress" aria-hidden="true"></div>
+
+<!-- 命令面板 ⌘K / Ctrl+K（现代快捷键交互，参考 Linear / Vercel 命令面板） -->
+<div class="cmdk-mask" id="cmdkMask" hidden>
+  <div class="cmdk" role="dialog" aria-modal="true" aria-label="命令面板">
+    <div class="cmdk-input-wrap">
+      <svg class="search-ico" aria-hidden="true" focusable="false"><use href="#i-search"/></svg>
+      <input id="cmdkInput" class="cmdk-input" type="text" placeholder="输入命令或搜索…（⌘K / Ctrl+K 开关，↑↓ 选择，↵ 执行，Esc 关闭）" autocomplete="off" spellcheck="false">
+      <kbd class="cmdk-kbd" id="cmdkKbd">⌘K</kbd>
+    </div>
+    <div class="cmdk-list" id="cmdkList" role="listbox"></div>
+    <div class="cmdk-foot">
+      <span><kbd>↑</kbd><kbd>↓</kbd> 选择</span>
+      <span><kbd>↵</kbd> 执行</span>
+      <span><kbd>Esc</kbd> 关闭</span>
+    </div>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

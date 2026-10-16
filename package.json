@@ -1,0 +1,17 @@
+{
+  "name": "shiyue",
+  "version": "1.0.0",
+  "private": true,
+  "description": "拾阅（shiyue）—— RSS 驱动的资源卡片站与每日 AI 简报，数据存 PostgreSQL",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "pg": "^8.23.1",
+    "undici": "^8.12.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

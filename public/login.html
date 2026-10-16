@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>登录 · 拾阅</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#ffffff">
+<script>
+/* 主题：与主站共用同一份偏好，首屏前定好 data-theme 避免闪白 */
+(function () {
+  var KEY = 'shiyue.theme.v1';
+  var mode = 'auto';
+  try { mode = localStorage.getItem(KEY) || 'auto'; } catch (e) { /* 隐私模式 */ }
+  var mq = window.matchMedia('(prefers-color-scheme: dark)');
+  var dark = mode === 'dark' || (mode === 'auto' && mq.matches);
+  var el = document.documentElement;
+  el.setAttribute('data-theme', dark ? 'dark' : 'light');
+  el.setAttribute('data-theme-mode', mode);
+  window.__themeBoot = { KEY: KEY, mq: mq, mode: mode };
+})();
+</script>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f4f6f9; --panel: #fff; --panel-2: #fbfcfe;
+    --border: #e6e9ef; --border-strong: #d7dce5;
+    --text: #1c2430; --muted: #6b7684; --faint: #9aa4b2;
+    --accent: #2f6bff; --accent-strong: #1f52d6; --on-accent: #fff;
+    --danger: #e5484d;
+    --err-bg: #fef1f1; --err-border: #fbd5d5;
+    --page-grad: radial-gradient(1200px 600px at 50% -10%, #e8eeff 0%, var(--bg) 55%);
+    --card-shadow: 0 10px 40px rgba(20, 30, 50, .09);
+    --focus-ring: rgba(47, 107, 255, .12);
+    --accent-glow: rgba(47, 107, 255, .28);
+    --logo-shadow: rgba(24, 95, 165, .3);
+    --code-bg: #f0f2f6;
+  }
+  html[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0e1116; --panel: #171b22; --panel-2: #12161c;
+    --border: #262c36; --border-strong: #39414f;
+    --text: #e6eaf0; --muted: #98a2b0; --faint: #6f7a89;
+    --accent: #5b8cff; --accent-strong: #86acff; --on-accent: #fff;
+    --danger: #f87171;
+    --err-bg: #2a1618; --err-border: #4d2427;
+    --page-grad: radial-gradient(1200px 600px at 50% -10%, #16203a 0%, var(--bg) 55%);
+    --card-shadow: 0 10px 40px rgba(0, 0, 0, .5);
+    --focus-ring: rgba(91, 140, 255, .2);
+    --accent-glow: rgba(91, 140, 255, .3);
+    --logo-shadow: rgba(0, 0, 0, .5);
+    --code-bg: rgba(255, 255, 255, .08);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh;
+    background: var(--page-grad);
+    display: grid; place-items: center;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+      "Microsoft YaHei", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    padding: 24px;
+    transition: background-color .2s ease, color .2s ease;
+  }
+  .login-card {
+    position: relative;
+    width: 100%; max-width: 380px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 34px 30px 30px;
+    box-shadow: var(--card-shadow);
+    animation: rise .3s cubic-bezier(.2,.8,.3,1);
+  }
+  @keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+
+  .logo {
+    width: 56px; height: 56px;
+    display: block;
+    margin: 0 auto 16px;
+    filter: drop-shadow(0 6px 16px var(--logo-shadow));
+  }
+  h1 { margin: 0 0 6px; font-size: 20px; text-align: center; font-weight: 650; }
+  .sub { margin: 0 0 26px; text-align: center; font-size: 13px; color: var(--faint); }
+
+  label { display: block; font-size: 13px; color: var(--muted); margin: 0 0 7px; font-weight: 550; }
+  .field { margin-bottom: 16px; }
+  input {
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid var(--border-strong);
+    border-radius: 11px;
+    font-size: 14px; font-family: inherit; color: var(--text);
+    outline: none; background: var(--panel-2);
+    transition: border-color .16s, box-shadow .16s, background .16s;
+  }
+  input:focus { border-color: var(--accent); background: var(--panel); box-shadow: 0 0 0 3px var(--focus-ring); }
+
+  button {
+    width: 100%; margin-top: 8px;
+    padding: 12px;
+    border: none; border-radius: 11px;
+    background: var(--accent); color: var(--on-accent);
+    font-size: 14.5px; font-weight: 600; font-family: inherit;
+    cursor: pointer;
+    box-shadow: 0 3px 12px var(--accent-glow);
+    transition: background .16s, transform .1s;
+  }
+  button:hover { background: var(--accent-strong); }
+  button:active { transform: translateY(1px); }
+  button:disabled { opacity: .6; cursor: not-allowed; }
+
+  /* 主题切换：放在卡片右上角，不影响表单主按钮样式 */
+  .theme-toggle {
+    position: absolute; top: 12px; right: 12px;
+    width: 30px; height: 30px; margin: 0; padding: 0;
+    border: 1px solid var(--border); border-radius: 9px;
+    background: var(--panel-2); color: var(--muted);
+    font-size: 14px; line-height: 1; font-weight: 400;
+    box-shadow: none;
+    transition: color .15s, border-color .15s, background .15s;
+  }
+  .theme-toggle:hover { color: var(--accent); border-color: var(--accent); background: var(--panel); }
+  .theme-toggle:active { transform: none; }
+
+  .error {
+    margin-top: 14px; padding: 10px 13px;
+    background: var(--err-bg); border: 1px solid var(--err-border);
+    color: var(--danger); border-radius: 10px;
+    font-size: 13px; display: none;
+  }
+  .error.show { display: block; animation: shake .3s; }
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-4px); }
+    75% { transform: translateX(4px); }
+  }
+  .tip { margin-top: 20px; text-align: center; font-size: 12px; color: var(--faint); }
+  .tip code { background: var(--code-bg); padding: 1px 6px; border-radius: 5px; font-size: 12px; }
+</style>
+</head>
+<body>
+  <form class="login-card" id="loginForm" autocomplete="on">
+    <button type="button" class="theme-toggle" id="themeBtn" title="主题：跟随系统" aria-label="切换主题">◐</button>
+    <svg class="logo" viewBox="0 0 64 64" role="img" aria-label="拾阅"><rect width="64" height="64" rx="15" fill="#185FA5"/><rect x="8" y="17" width="33" height="37" rx="6" fill="#ffffff"/><rect x="15" y="25" width="19" height="5" rx="2.5" fill="#185FA5"/><rect x="15" y="35" width="12" height="5" rx="2.5" fill="#185FA5"/><rect x="15" y="45" width="16" height="5" rx="2.5" fill="#185FA5"/><path d="M51.5 6 l2.9 7.1 7.1 2.9 -7.1 2.9 -2.9 7.1 -2.9 -7.1 -7.1 -2.9 7.1 -2.9 z" fill="#ffffff"/></svg>
+    <h1>拾阅</h1>
+    <p class="sub">拾取值得读的，登录后查看</p>
+
+    <div class="field">
+      <label for="username">用户名</label>
+      <input id="username" name="username" type="text" autocomplete="username" required autofocus>
+    </div>
+    <div class="field">
+      <label for="password">密码</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+    </div>
+
+    <button type="submit" id="submitBtn">登 录</button>
+    <div class="error" id="error"></div>
+
+    <p class="tip">默认账号 <code>admin</code> / <code>admin</code>，登录后可在「设置 → 账号」中修改</p>
+  </form>
+
+<script>
+  const form = document.getElementById('loginForm');
+  const btn = document.getElementById('submitBtn');
+  const errBox = document.getElementById('error');
+
+  /* ---------- 主题切换（与主站共用 shiyue.theme.v1） ---------- */
+  const THEME_KEY = 'shiyue.theme.v1';
+  const THEME_MODES = ['auto', 'light', 'dark'];
+  const THEME_META = {
+    auto: { ico: '◐', label: '跟随系统' },
+    light: { ico: '☀', label: '浅色' },
+    dark: { ico: '☾', label: '深色' },
+  };
+  const themeBtn = document.getElementById('themeBtn');
+
+  function prefersDark() {
+    return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  }
+  function currentThemeMode() {
+    try {
+      const m = localStorage.getItem(THEME_KEY);
+      return THEME_MODES.indexOf(m) >= 0 ? m : 'auto';
+    } catch (_) { return 'auto'; }
+  }
+  function applyTheme(mode) {
+    const m = THEME_MODES.indexOf(mode) >= 0 ? mode : 'auto';
+    const dark = m === 'dark' || (m === 'auto' && prefersDark());
+    const el = document.documentElement;
+    el.setAttribute('data-theme', dark ? 'dark' : 'light');
+    el.setAttribute('data-theme-mode', m);
+    try { localStorage.setItem(THEME_KEY, m); } catch (_) { /* 忽略 */ }
+    themeBtn.textContent = THEME_META[m].ico;
+    themeBtn.title = '主题：' + THEME_META[m].label + '（点击切换）';
+    themeBtn.setAttribute('aria-label', '主题：' + THEME_META[m].label);
+    const tc = document.querySelector('meta[name="theme-color"]');
+    if (tc) tc.setAttribute('content', dark ? '#171b22' : '#ffffff');
+  }
+
+  themeBtn.addEventListener('click', () => {
+    const next = THEME_MODES[(THEME_MODES.indexOf(currentThemeMode()) + 1) % THEME_MODES.length];
+    applyTheme(next);
+  });
+  try {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+      if (currentThemeMode() === 'auto') applyTheme('auto');
+    });
+  } catch (_) { /* 老浏览器忽略 */ }
+  applyTheme(currentThemeMode());
+
+  /* ---------- 登录 ---------- */
+  function showError(msg) {
+    errBox.textContent = msg;
+    errBox.classList.add('show');
+  }
+
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    errBox.classList.remove('show');
+    btn.disabled = true;
+    btn.textContent = '登录中…';
+
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: document.getElementById('username').value,
+          password: document.getElementById('password').value,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        const next = new URLSearchParams(location.search).get('next');
+        location.replace(next && next.startsWith('/') ? next : '/');
+        return;
+      }
+      showError(data.error || '登录失败');
+    } catch (_) {
+      showError('网络异常，请重试');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '登 录';
+    }
+  });
+</script>
+</body>
+</html>
