@@ -18,6 +18,21 @@
 
 ---
 
+## [1.7.0] — 2026-10-16
+
+新增：
+
+- **「AI」视图 React 化**（React 渐进式迁移的 P3a 阶段，三大视图迁移的第一个切片）：视图内容整体迁往 `src/ai/AiView.jsx`，挂载到 `index.html` 的 `#aiRoot`（外层 `#aiView` 容器仍由旧 `switchView` 控制显隐）；类名 / ID / data 属性、视觉与交互保持不变。
+  - **日报子页**：进入即拉 `/api/digests` 日期列表与所选日期摘要，概览 / 元信息（生成时间·模型·采集→精选·覆盖频道）/ 今日亮点 / 分组条目全部由 JSX 渲染；日期下拉切换、生成 / 重新生成（`/api/digest/generate`）、空态 / 加载 / 读取失败 / 生成失败各状态齐备；条目复制按钮与缩略图兜底改由 React 处理（替代旧 `bindCardActions`）。
+  - **日报设置子页**（仅管理员）：`/api/config` 的 `digest` 段表单（自动生成 / 时间 / 范围 / 条数上限 / 保留天数）受控渲染，联动副标题与两个折叠分组的摘要行；保存 `POST /api/config`。
+  - 子页光标按账号持久化（`users.prefs.layout.aiPage`），经桥 `getAiPage` / `setAiPage` 读写；React 常驻挂载但只在切到 AI 页时拉数据（视图切换经 `__viewChanged` 事件感知）。
+- 迁移中顺手清理落后实现（遵循「技术落后 / 体验不好的可丢弃」原则）：
+  - 日报展示由 `innerHTML` 字符串拼接改为 JSX 组件（概览 / 元信息 / 亮点 / 分组 / 条目拆为组件）。
+  - 子页显隐 / 高亮由命令式 `classList` / `hidden` 改写为 React 条件渲染，管理员专属的「日报设置」入口按 `admin` 直接不渲染（而非 DOM 隐藏）。
+  - 桥新增 `getAiPage` / `setAiPage` / `linkLabel`；`applyRoleUI` 不再处理 `#aiNav`。
+
+---
+
 ## [1.6.0] — 2026-10-16
 
 新增：

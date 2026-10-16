@@ -99,10 +99,6 @@ const toastEl = $('#toast');
 const statCount = $('#statCount');
 const subtitle = $('#subtitle');
 const feedSelect = $('#feedSelect');
-const digestBody = $('#digestBody');
-const digestDateSel = $('#digestDate');
-const digestSub = $('#digestSub');
-const dgResult = $('#dgResult');
 const viewModeEl = $('#viewMode');
 /* 阅读页 */
 const readerChannels = $('#readerChannels');
@@ -771,18 +767,13 @@ function renderSkeletons(n = 8) {
 const ADMIN_TABS = ['status'];
 const isAdmin = () => state.role === 'admin';
 
-/** 按角色显隐设置里管理员专属的部分：状态 tab（React 外壳过滤）、日报设置；
- *  采集参数与「保存设置」按钮自 v1.5.0 起在 React 数据源面板内按 admin 显隐；
- *  用户管理自 v1.6.0 起在 React 账号面板内按 admin 显隐 */
+/** 按角色显隐：设置弹层的管理员专属 tab 由 React 外壳过滤；
+ *  采集参数 / 用户管理 / 日报设置分别在各自 React 面板内按 admin 显隐（P3a 起 AI 视图亦 React 化） */
 function applyRoleUI() {
   const admin = isAdmin();
   // 设置弹层 tab 已 React 化：按角色过滤交给宿主（管理员专属 tab 由外壳不再渲染）
   const host = window.__settingsHost;
   if (host && host.setAdminFlag) host.setAdminFlag(admin);
-  const aiSettings = document.querySelector('#aiNav [data-ai="settings"]');
-  if (aiSettings) aiSettings.hidden = !admin;        // 日报设置是全局设置
-  // 普通用户若正停在管理员子页（如深链 #ai/settings），退回默认子页
-  if (!admin && aiPage === 'settings') switchAiPage('digest');
 }
 
 /* ---------- 弹层打开时锁住背景页面 ----------
@@ -957,52 +948,6 @@ $('#viewNav').addEventListener('click', (ev) => {
   const b = ev.target.closest('.viewnav-btn');
   // 「收藏」不再是顶栏入口，只作为文章页侧栏里的一个范围（state.rdScope）
   if (b) switchView(b.getAttribute('data-view'));
-});
-
-$('#genDigestBtn').addEventListener('click', () => generateDigest(false));
-$('#regenDigestBtn').addEventListener('click', () => generateDigest(true));
-digestDateSel.addEventListener('change', () => showDigest(digestDateSel.value));
-
-/* 模型面板已 React 化（src/settings/ModelPane.jsx）：显示/隐藏 Key、测试、保存、
-   清除四个动作随面板挂载/卸载自洽完成，请求体与旧实现逐字段一致，旧绑定移除 */
-
-/* 日报设置：联动提示（含两个折叠分组的摘要行） */
-['#dgEnabled', '#dgTime', '#dgScope', '#dgMaxPerFeed', '#dgMaxTotal', '#dgKeepDays'].forEach((sel) => {
-  const el = $(sel);
-  if (!el) return;
-  el.addEventListener('change', updateDigestHint);
-  if (el.tagName === 'INPUT' && el.type === 'number') el.addEventListener('input', updateDigestHint);
-});
-
-/* 日报设置：保存 */
-$('#saveDgBtn').addEventListener('click', async () => {
-  const btn = $('#saveDgBtn');
-  btn.disabled = true; btn.textContent = '保存中…';
-  try {
-    const res = await apiFetch('/api/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        digest: {
-          enabled: $('#dgEnabled').checked,
-          time: $('#dgTime').value || '08:00',
-          scope: $('#dgScope').value,
-          maxPerFeed: $('#dgMaxPerFeed').value,
-          maxTotal: $('#dgMaxTotal').value,
-          keepDays: $('#dgKeepDays').value,
-        },
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) { showResult(dgResult, false, data.error || '保存失败'); return; }
-    showResult(dgResult, true, '日报设置已保存');
-    toast('日报设置已保存');
-    updateDigestHint();
-  } catch (err) {
-    showResult(dgResult, false, '保存失败：' + (err.message || err));
-  } finally {
-    btn.disabled = false; btn.textContent = '保存日报设置';
-  }
 });
 
 /* ============================================================
@@ -1184,8 +1129,8 @@ function switchView(name) {
       if (!state.rdEntries.length) loadReader({ reset: true });
       else renderReader();
     }
-    // AI 有多个子页，回到它时停在离开前的那个
-    if (name === 'ai') switchAiPage(aiPage);
+    // AI 视图已 React 化：通知 AiView 激活 / 隐去（切到 ai 时由组件自行加载子页数据）
+    window.dispatchEvent(new CustomEvent('__viewChanged', { detail: name }));
 
     window.scrollTo({ top: 0 });
     if (typeof updateProgress === 'function') updateProgress();
@@ -2049,259 +1994,10 @@ defeatAutofill($('#searchInput'));
 defeatAutofill(readerSearch);
 
 /* ============================================================
- * AI 页：把大模型相关的能力聚在一个入口下，内部再分子页。
- * 加一个新功能只要三步：
- *   1. 在 index.html 的 #aiNav 里加一个 <button data-ai="xxx">
- *   2. 加一个 <section class="ai-pane" data-ai-pane="xxx">
- *   3. 需要拉数据的话，在 AI_LOADERS 里登记一下（纯静态子页不用）
- * 日报是第一个子页；「日报设置」也从设置弹层搬了过来，顺带把设置页变短。
+ * AI 子页光标（React AiView 读写；持久化 users.prefs.layout.aiPage）
+ * AI 视图自 v1.7.0 起 React 化（src/ai/AiView.jsx），旧渲染 / 绑定全部移除。
  * ============================================================ */
-const AI_PAGES = ['digest', 'settings'];
-
-/** 子页 → 拉数据的函数 */
-const AI_LOADERS = {
-  digest: () => loadDigestView(),
-  settings: () => loadDigestForm(),
-};
-
-// 按账号持久化（users.prefs.layout.aiPage），不再落浏览器 localStorage
-let aiPage = (AI_PAGES.indexOf(layoutPref.aiPage) >= 0) ? layoutPref.aiPage : AI_PAGES[0];
-
-function switchAiPage(name) {
-  if (AI_PAGES.indexOf(name) < 0) name = AI_PAGES[0];
-  if (name === 'settings' && !isAdmin()) name = 'digest';   // 日报设置是全局设置，仅管理员
-  aiPage = name;
-  setLayout('aiPage', name);   // 按账号持久化
-  $$('#aiNav .ainav-btn').forEach((b) => {
-    b.classList.toggle('active', b.getAttribute('data-ai') === name);
-  });
-  $$('#aiView .ai-pane').forEach((p) => {
-    p.hidden = p.getAttribute('data-ai-pane') !== name;
-  });
-  const load = AI_LOADERS[name];
-  if (load) load();
-}
-
-$('#aiNav').addEventListener('click', (ev) => {
-  const b = ev.target.closest('.ainav-btn');
-  if (b) switchAiPage(b.getAttribute('data-ai'));
-});
-
-/* ============================================================
- * 日报
- * ============================================================ */
-function shanghaiToday() {
-  return new Intl.DateTimeFormat('sv-SE', {
-    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(new Date());
-}
-
-function refreshDateOptions(selected) {
-  const dates = (state.digest.dates || []).slice();
-  const today = shanghaiToday();
-  if (!dates.includes(today)) dates.unshift(today);
-  const want = selected || digestDateSel.value || today;
-  digestDateSel.innerHTML = dates
-    .map((d) => `<option value="${d}">${d === today ? '今天 · ' : ''}${d}</option>`)
-    .join('');
-  digestDateSel.value = dates.includes(want) ? want : today;
-}
-
-async function loadDigestView() {
-  if (!state.digest) state.digest = { dates: [], current: null };
-  try {
-    const res = await apiFetch('/api/digests');
-    const data = await res.json();
-    state.digest.dates = data.dates || [];
-  } catch (_) { state.digest.dates = []; }
-
-  // 顺带刷新一次频道列表：摘要是按「已开启频道」采集的，这里要显示准确的开关数
-  try { await loadFeeds(); } catch (_) { /* 忽略，用已有缓存 */ }
-  if (isAdmin() && !state.config) { try { state.config = await (await apiFetch('/api/config')).json(); } catch (_) { /* 忽略 */ } }
-
-  refreshDateOptions(state.digest.current);
-  updateDigestSubtitle();
-  await showDigest(digestDateSel.value);
-}
-
-function updateDigestSubtitle() {
-  const feeds = state.feedList || [];
-  const enabled = feeds.filter((f) => f.enabled).length;
-  const scope = (state.config && state.config.digest && state.config.digest.scope) || 'selected';
-  const which = scope === 'all' ? '全部频道' : '「采集」开启的频道';
-  digestSub.textContent = `把${which}过去 24 小时的新条目整理成一份中文简报`
-    + ` · 共 ${feeds.length} 个频道，采集开启 ${enabled} 个`;
-}
-
-async function showDigest(date) {
-  if (!state.digest) state.digest = { dates: [], current: null };
-  state.digest.current = date;
-  digestBody.innerHTML = '<div class="dg-loading"><div class="dg-spinner"></div>读取中…</div>';
-  try {
-    const res = await apiFetch('/api/digest?date=' + encodeURIComponent(date));
-    const data = await res.json();
-    renderDigest(data.digest, date);
-  } catch (err) {
-    digestBody.innerHTML = `<div class="dg-error">读取失败：${escapeHtml(err.message || err)}</div>`;
-  }
-}
-
-function dgItemHtml(it) {
-  const e = it.item || {};
-  const comment = it.comment ? `<span class="dg-comment">${escapeHtml(it.comment)}</span>` : '';
-  const src = e.feedName ? `<span class="src-pill">${escapeHtml(e.feedName)}</span>` : '';
-  const thumb = e.image
-    ? `<img class="dg-item-thumb" loading="lazy" src="${escapeHtml(e.image)}" alt="">`
-    : `<div class="dg-item-thumb-fb">${icon('file')}</div>`;
-  const copy = e.link
-    ? `<button class="btn-copy" data-copy="${escapeHtml(e.link)}">${icon('link')} 复制链接</button>` : '';
-  const open = e.link
-    ? `<a class="btn-open" href="${escapeHtml(e.link)}" target="_blank" rel="noopener noreferrer">打开</a>` : '';
-  const size = e.size ? `<span class="dg-item-size">${escapeHtml(e.size)}</span>` : '';
-
-  return `<div class="dg-item">
-    ${thumb}
-    <div class="dg-item-main">
-      <div class="dg-item-top">${comment}${src}</div>
-      <div class="dg-item-name">${escapeHtml(e.name || '(无标题)')}</div>
-      <div class="dg-item-foot">${copy}${open}${size}</div>
-    </div>
-  </div>`;
-}
-
-function renderDigest(d, date) {
-  if (!d) {
-    digestBody.innerHTML = `<div class="dg-empty">
-      <div class="dg-empty-ico">${icon('calendar')}</div>
-      <p><strong>${escapeHtml(date)}</strong> 还没有摘要</p>
-      <p class="hint">点击右上角「生成摘要」，把所选频道过去 24 小时的新内容整理成简报</p>
-    </div>`;
-    return;
-  }
-
-  const gen = d.generatedAt
-    ? new Date(d.generatedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
-    : '—';
-
-  const meta = `<div class="dg-meta">
-    <span><b>生成时间</b> ${escapeHtml(gen)}</span>
-    <span><b>模型</b> ${escapeHtml(d.model || '—')}</span>
-    <span><b>采集</b> ${(d.stats && d.stats.collected) || 0} 条 → 精选 ${(d.stats && d.stats.kept) || 0} 条</span>
-    <span><b>覆盖频道</b> ${(d.stats && d.stats.feeds) || 0} 个</span>
-    ${d.usedMapReduce ? '<span><b>模式</b> 分批汇总</span>' : ''}
-  </div>`;
-
-  const hl = (d.highlights || []).map((h, i) => `
-    <div class="dg-hl">
-      <div class="dg-hl-idx">${i + 1}</div>
-      <div class="dg-hl-body">
-        <div class="dg-hl-text">${escapeHtml(h.text || '')}</div>
-        ${h.item && h.item.name ? `<div class="dg-hl-name">${escapeHtml(h.item.name)}</div>` : ''}
-      </div>
-    </div>`).join('');
-
-  const secs = (d.sections || []).map((s) => `
-    <div class="dg-card">
-      <h3 class="dg-section-title">${escapeHtml(s.title || '未分类')}<span class="cnt">${s.items.length} 条</span></h3>
-      <div class="dg-items">${s.items.map(dgItemHtml).join('')}</div>
-    </div>`).join('');
-
-  const errNote = d.error
-    ? `<div class="dg-meta" style="border-top:none;padding-top:0"><span style="color:#b7791f">模型调用失败，已降级为规则摘要：${escapeHtml(d.error)}</span></div>`
-    : '';
-
-  digestBody.innerHTML = `
-    <div class="dg-card">
-      <div class="dg-overview">${escapeHtml(d.overview || '（无概览）')}${d.fallback ? '<span class="dg-tag-fallback">规则摘要</span>' : ''}</div>
-      ${meta}
-      ${errNote}
-    </div>
-    ${hl ? `<div class="dg-card">
-      <h3 class="dg-section-title">今日亮点<span class="cnt">${(d.highlights || []).length} 条</span></h3>
-      <div class="dg-hl-list">${hl}</div>
-    </div>` : ''}
-    ${secs || `<div class="dg-empty"><div class="dg-empty-ico">${icon('inbox')}</div><p>没有可展示的条目</p></div>`}
-  `;
-  bindCardActions(digestBody);
-}
-
-async function generateDigest(force) {
-  if (!state.digest) state.digest = { dates: [], current: null };
-  const genBtn = $('#genDigestBtn');
-  const reBtn = $('#regenDigestBtn');
-  genBtn.disabled = true; reBtn.disabled = true;
-
-  digestBody.innerHTML = `<div class="dg-loading">
-    <div class="dg-spinner"></div>
-    正在采集过去 24 小时的新条目并生成摘要…
-    <div class="hint" style="margin-top:8px">首次生成约需 30~60 秒，请勿关闭页面</div>
-  </div>`;
-
-  try {
-    const res = await apiFetch('/api/digest/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      // 不传 feeds：由服务端按「摘要范围」设置决定采集哪些频道
-      body: JSON.stringify({ force: !!force }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || '生成失败');
-
-    const d = data.digest;
-    if (!state.digest.dates.includes(d.date)) state.digest.dates.unshift(d.date);
-    refreshDateOptions(d.date);
-    renderDigest(d, d.date);
-    toast(data.cached ? '已读取当日缓存摘要' : `摘要生成完成（${d.stats.kept} 条 / ${d.stats.feeds} 频道）`);
-  } catch (err) {
-    digestBody.innerHTML = `<div class="dg-error">
-      <div class="dg-empty-ico">${icon('alert')}</div>
-      <p>生成失败：${escapeHtml(err.message || err)}</p>
-      <p class="hint">请在「设置 → 模型」检查模型地址与 Key 是否正确</p>
-    </div>`;
-  } finally {
-    genBtn.disabled = false; reBtn.disabled = false;
-  }
-}
-
-/* ============================================================
- * 设置：日报（模型面板已 React 化，见 src/settings/ModelPane.jsx）
- * ============================================================ */
-
-async function loadDigestForm() {
-  try {
-    const res = await apiFetch('/api/config');
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const cfg = await res.json();
-    state.config = cfg;
-    $('#dgEnabled').checked = !!cfg.digest.enabled;
-    $('#dgTime').value = cfg.digest.time || '08:00';
-    $('#dgScope').value = cfg.digest.scope || 'selected';
-    $('#dgMaxPerFeed').value = cfg.digest.maxPerFeed;
-    $('#dgMaxTotal').value = cfg.digest.maxTotal;
-    $('#dgKeepDays').value = cfg.digest.keepDays;
-    updateDigestHint();
-  } catch (err) {
-    showResult(dgResult, false, '读取配置失败：' + (err.message || err));
-  }
-}
-
-function updateDigestHint() {
-  const on = $('#dgEnabled').checked;
-  const scope = $('#dgScope').value === 'all' ? '全部频道' : '仅「采集」开启的频道';
-  dgResult.className = 'test-result';
-  $('#dgHint').innerHTML = on
-    ? `每天 <strong>${$('#dgTime').value || '08:00'}</strong>（北京时间）自动生成 · 范围：${scope}`
-    : '自动生成已关闭，可随时在「日报」页手动生成';
-
-  // 折叠分组的摘要行：收起时也能一眼看到当前设置
-  const autoSub = $('#dgAutoSub');
-  if (autoSub) autoSub.textContent = on ? `每天 ${$('#dgTime').value || '08:00'} · ${scope}` : '已关闭';
-  const limSub = $('#dgLimitsSub');
-  if (limSub) {
-    limSub.textContent = `每频道 ${$('#dgMaxPerFeed').value} 条 · 总计 ${$('#dgMaxTotal').value} 条`
-      + ` · 保留 ${$('#dgKeepDays').value} 天`;
-  }
-}
+let aiPage = (['digest', 'settings'].indexOf(layoutPref.aiPage) >= 0) ? layoutPref.aiPage : 'digest';
 
 /* ============================================================
  * 主题（跟随系统 / 浅色 / 深色）
@@ -2704,7 +2400,7 @@ bindSections(document);
     tab = 'ai';
     // #ai/settings 这种可以直达某个子页
     const sub = location.hash.slice(3).replace(/^[/:]+/, '');
-    if (AI_PAGES.indexOf(sub) >= 0) aiPage = sub;
+    if (['digest', 'settings'].indexOf(sub) >= 0) aiPage = sub;
   }
   switchView(tab);
 
@@ -2898,4 +2594,8 @@ window.shiyue = {
   bindSections, groupFeeds,
   // —— v1.6.0 起账号 / 状态面板 React 化（P2d，组件见 src/settings/AccountPane.jsx / StatusPane.jsx） ——
   promptInstall,
+  // —— v1.7.0 起 AI 视图 React 化（P3a，组件见 src/ai/AiView.jsx） ——
+  getAiPage: () => aiPage,
+  setAiPage: (n) => { aiPage = (['digest', 'settings'].indexOf(n) >= 0) ? n : 'digest'; setLayout('aiPage', aiPage); },
+  linkLabel,
 };
