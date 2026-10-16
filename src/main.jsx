@@ -1,7 +1,7 @@
 /* 拾阅前端 React 入口（渐进式混合期）。
  * 职责：把 React 组件挂到旧 HTML 的挂载点上。
  * 目前挂命令面板（#cmdkRoot）、设置弹层（#settingsRoot）、AI 视图（#aiRoot）、
- * 卡片视图（#cardsRoot）；文章视图随 P3c 继续迁移。
+ * 卡片视图（#cardsRoot）、文章视图（#readerRoot）—— 三大视图全部 React 化。
  * window.shiyue 桥由旧 app.js 在脚本执行时建立，本模块只消费。 */
 
 import React from 'react';
@@ -10,6 +10,7 @@ import { CommandPalette } from './cmdk/CommandPalette.jsx';
 import { SettingsModal } from './settings/SettingsModal.jsx';
 import { AiView } from './ai/AiView.jsx';
 import { CardsView } from './views/CardsView.jsx';
+import { ReaderView } from './views/ReaderView.jsx';
 
 const el = document.getElementById('cmdkRoot');
 if (el) {
@@ -43,6 +44,15 @@ if (cardsRoot) {
   createRoot(cardsRoot).render(
     <React.StrictMode>
       <CardsView />
+    </React.StrictMode>
+  );
+}
+
+const readerRoot = document.getElementById('readerRoot');
+if (readerRoot) {
+  createRoot(readerRoot).render(
+    <React.StrictMode>
+      <ReaderView />
     </React.StrictMode>
   );
 }

@@ -46,6 +46,8 @@ const state = {
   rdExpanded: new Set(),   // 已展开的条目 id
   rdBody: new Map(),       // id -> 正文（展开时才拉，拉过就缓存）
   rdBodyErr: new Set(),    // 拉正文失败的 id，避免反复重试
+  rdReadError: false,      // 首屏加载失败（React 阅读页据此显示错误空态）
+  rdReadErrorMsg: '',
 };
 
 /* ---------------- 按账号保存的 UI 布局偏好 ----------------
@@ -91,16 +93,6 @@ const $$ = (s) => document.querySelectorAll(s);
 const toastEl = $('#toast');
 const statCount = $('#statCount');
 const subtitle = $('#subtitle');
-/* 阅读页 */
-const readerChannels = $('#readerChannels');
-const readerSideN = $('#readerSideN');
-const readerList = $('#readerList');
-const readerTitle = $('#readerTitle');
-const readerEmpty = $('#readerEmpty');
-const readerMore = $('#readerMore');
-const readerCollapseAll = $('#readerCollapseAll');
-const readerReadAllBtn = $('#readerReadAllBtn');
-
 /* ---------------- 工具 ---------------- */
 /** 带登录态处理的 fetch：401 时跳登录页 */
 async function apiFetch(url, opts) {
@@ -174,13 +166,6 @@ function sizeToMB(s) {
 }
 
 let toastTimer = null;
-/* 内联 SVG 图标：符号定义在 index.html 顶部的 sprite 里（#i-xxx）。
-   一律用这套，别再用 ⟳ ★ ✕ 这类字符图标 —— 它们在 Windows / Android / iOS
-   上的字形、粗细、基线各不相同，同一排按钮会显得参差不齐。 */
-function icon(name, cls) {
-  return `<svg class="ico${cls ? ' ' + cls : ''}" aria-hidden="true" focusable="false"><use href="#i-${name}"/></svg>`;
-}
-
 function toast(msg, ok = true) {
   toastEl.textContent = msg;
   toastEl.className = 'toast show' + (ok ? ' ok' : '');
@@ -409,45 +394,6 @@ function shortUrl(url) {
   return s.length > 46 ? s.slice(0, 30) + '…' + s.slice(-12) : s;
 }
 
-/** 该条目可复制的链接（后端 links 数组；老数据退回单条 link） */
-function copyableLinks(e) {
-  const list = Array.isArray(e.links) ? e.links.filter(Boolean) : [];
-  if (list.length) return list;
-  return e.link ? [e.link] : [];
-}
-
-/** 复制按钮（图标）。多条时点击弹出选择菜单 */
-function copyBtnHtml(e, cls = 'btn-copy') {
-  const urls = copyableLinks(e);
-  if (!urls.length) {
-    return `<button class="${cls}" disabled title="无链接" aria-label="无链接">${icon('copy')}</button>`;
-  }
-  const many = urls.length > 1;
-  const title = many ? `复制链接（${urls.length} 条，可选择）` : '复制链接';
-  return `<button class="${cls}" type="button" data-copy="${escapeHtml(urls[0])}"`
-    + ` data-links="${escapeHtml(JSON.stringify(urls))}" title="${title}" aria-label="复制链接">${icon('copy')}</button>`;
-}
-
-/** 打开按钮（图标）：跳转「原文章」（sourceUrl，缺失时退回主链接） */
-function openBtnHtml(e, cls = 'btn-open') {
-  const url = e.sourceUrl || e.link || null;
-  if (!url) return `<span class="${cls} disabled" title="没有原文地址" aria-label="没有原文地址">${icon('external')}</span>`;
-  return `<a class="${cls}" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"`
-    + ` title="打开原文章" aria-label="打开原文章">${icon('external')}</a>`;
-}
-
-/** 复制到剪贴板 + 按钮反馈 */
-async function doCopy(btn, url) {
-  const ok = await copyText(url);
-  if (!ok) { toast('复制失败，请手动选择链接', false); return; }
-  const old = btn.innerHTML;
-  const iconOnly = !btn.textContent.trim();
-  btn.classList.add('copied');
-  btn.innerHTML = iconOnly ? icon('check') : `${icon('check')} 已复制`;
-  toast(`已复制：${linkLabel(url)}`);
-  setTimeout(() => { btn.classList.remove('copied'); btn.innerHTML = old; }, 1600);
-}
-
 /* 链接选择菜单：多条链接时从按钮旁弹出（fixed 定位，自动避让视口边缘） */
 let linkMenuEl = null;
 function closeLinkMenu() {
@@ -499,50 +445,6 @@ function openLinkMenu(anchor, urls, onPick) {
     window.addEventListener('resize', closeLinkMenu);
     window.addEventListener('scroll', closeLinkMenu, true);
   }, 0);
-}
-
-/** 统一绑定卡片上的复制 / 图片兜底交互 */
-function bindCardActions(root) {
-  root.querySelectorAll('[data-copy]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      let urls = [];
-      try { urls = JSON.parse(btn.getAttribute('data-links') || '[]'); } catch (_) { urls = []; }
-      urls = (Array.isArray(urls) ? urls : []).filter(Boolean);
-      if (!urls.length) {
-        const one = btn.getAttribute('data-copy');
-        if (one) urls = [one];
-      }
-      if (!urls.length) return;
-      // 只有一条就直接复制；多条让用户挑（网盘帖常见「百度 / 夸克 / 阿里」并列）
-      if (urls.length === 1) doCopy(btn, urls[0]);
-      else openLinkMenu(btn, urls, (u) => doCopy(btn, u));
-    });
-  });
-
-  root.querySelectorAll('.card-media img, .row-thumb img, .dg-item-thumb, .art-img').forEach((img) => {
-    // 已缓存（complete 且确实拿到了图）直接标 ready，避免再转一次流光
-    if (img.complete && img.naturalWidth > 0) img.classList.add('img-ready');
-    else {
-      img.addEventListener('load', () => img.classList.add('img-ready'), { once: true });
-      // 已读缓存但 naturalWidth 为 0（比如 data: 占位）也别一直空转
-      img.addEventListener('error', () => img.classList.add('img-ready'), { once: true });
-    }
-    img.addEventListener('error', () => {
-      // 图片代理偶发 502/504（源站瞬时抖动）时先自动重试一次，仍失败再走降级
-      if (!img.dataset.retried && img.getAttribute('src')) {
-        img.dataset.retried = '1';
-        img.src = img.src.split('#')[0] + (img.src.includes('?') ? '&' : '?') + 'r=1';
-        return;
-      }
-      // 阅读页的配图加载失败就直接不显示，塞个占位图反而更难看
-      if (img.classList.contains('art-img')) { img.remove(); return; }
-      const fb = document.createElement('div');
-      fb.className = img.classList.contains('dg-item-thumb') ? 'dg-item-thumb-fb'
-        : (img.closest('.row-thumb') ? 'row-thumb-fb' : 'media-fallback');
-      fb.innerHTML = icon('image');
-      img.replaceWith(fb);
-    });
-  });
 }
 
 /* ============================================================
@@ -913,283 +815,16 @@ function syncViewNav() {
  * 阅读页（文章）：左频道 / 右文章，点标题展开全文
  * ============================================================ */
 
-/** 阅读页的频道列表：所有频道都列（这是内容归档，不跟「卡片」开关走），按分组归拢 */
-function renderReaderChannels() {
-  const feeds = state.feedList || [];
-  const grouped = groupFeeds(feeds);
-  const flags = state.rdFlags || { total: 0, unread: 0, favorite: 0 };
-  // 顶部三个固定入口只在「没选具体频道/分组」时才算选中
-  const atScope = state.rdFeedId == null && state.rdGroup == null;
+/* ============================================================
+ * 阅读页（文章）：逻辑归 app.js，渲染归 React（src/views/ReaderView.jsx）
+ * v1.9.0 起阅读页 React 化：频道侧栏 / 头部工具 / 搜索 / 条目与正文渲染全部移除，
+ * 这里只保留数据 / 加载 / 交互逻辑，需要刷新 UI 时派发 __readerTick（组件监听后读实时 state 重绘）。
+ * ============================================================ */
 
-  /* 固定入口：全部 / 未读 / 收藏。它们是「范围」，点了会清掉频道与分组选择，
-     避免出现「收藏里再看某个频道」这种说不清的叠加。 */
-  const scopeBtn = (key, ico, name, n, cls) => `
-    <button class="rd-ch${atScope && state.rdScope === key ? ' active' : ''}" type="button" data-scope="${key}">
-      <span class="rd-ch-avatar ${cls}">${ico}</span>
-      <span class="rd-ch-name">${name}</span>
-      ${n > 0 ? `<span class="rd-ch-n">${n}</span>` : ''}
-    </button>`;
-  const scopes = scopeBtn('all', icon('circle'), '全部文章', flags.total, 'rd-ch-avatar-all')
-    + scopeBtn('unread', icon('dot'), '未读', flags.unread, 'rd-ch-avatar-unread')
-    + scopeBtn('favorite', icon('star'), '收藏', flags.favorite, 'rd-ch-avatar-fav')
-    + '<div class="rd-ch-sep" aria-hidden="true"></div>';
-
-  const chHtml = (f) => {
-    const name = shortFeedName(feedTitle(f));
-    const av = f.icon
-      ? `<img class="rd-ch-avatar" src="${escapeHtml(f.icon)}" alt="" loading="lazy">`
-      : `<span class="rd-ch-avatar rd-ch-avatar-txt">${escapeHtml((name || '?').slice(0, 1))}</span>`;
-    const dim = f.enabled ? '' : ' off';
-    const tip = f.enabled ? feedTitle(f) : `${feedTitle(f)}（已停止采集）`;
-    // 徽标只表示「未读」：有未读才显示数字，全部已读就不显示
-    // （以前全读完会退回显示总数，容易被当成未读数）
-    const unread = Number(f.unreadCount || 0);
-    const count = Number(f.entryCount || 0);
-    const active = state.rdFeedId != null && String(state.rdFeedId) === String(f.id);
-    return `
-      <button class="rd-ch${dim} ${active ? 'active' : ''}" type="button" data-feed="${escapeHtml(f.id)}">
-        ${av}
-        <span class="rd-ch-name" title="${escapeHtml(tip || '')}">${escapeHtml(name)}</span>
-        ${unread > 0 ? `<span class="rd-ch-n hot" title="${unread} 条未读 / 共 ${count} 条">${unread}</span>` : ''}
-      </button>`;
-  };
-
-  const hasGroups = grouped.some((g) => g.name);
-  let body = '';
-  for (const g of grouped) {
-    const gname = g.name || '';
-    // 分组徽标统一用「组内未读总数」，与未读/频道徽标保持同一信号
-    // （以前显示频道数跟"全部文章 10128"那种"条数"对不上，扫一眼分不清是频道数还是文章数）
-    const gUnread = g.feeds.reduce((s, x) => s + Number(x.unreadCount || 0), 0);
-    if (hasGroups) {
-      body += `<div class="rd-ch-group-row">
-        <button type="button" class="rd-ch-group${gname ? '' : ' muted'}${state.rdGroup === gname ? ' active' : ''}${gUnread > 0 ? ' has-unread' : ''}"
-          data-group="${escapeHtml(gname)}" title="只看「${escapeHtml(gname || '未分组')}」分组下的文章">
-          <span class="rd-ch-group-name">${escapeHtml(gname || '未分组')}</span>
-          ${gUnread > 0 ? `<span class="rd-ch-n hot">${gUnread}</span>` : `<span class="rd-ch-group-empty" aria-hidden="true">✓</span>`}
-        </button>
-      </div>`;
-    }
-    body += g.feeds.map(chHtml).join('');
-  }
-
-  // 末尾加一个"添加频道"链接，跟"未读为 0 的分组用 ✓ 提示"风格一致：
-  // 不在主路径里塞按钮，扫一眼能发现，点击直接进设置的数据源 tab
-  body += `<button type="button" class="rd-ch-add" data-action="open-source">
-    <svg class="rd-ch-add-ico" aria-hidden="true" focusable="false"><use href="#i-plus"/></svg>
-    <span>添加频道</span>
-  </button>`;
-
-  readerChannels.innerHTML = scopes + body;
-  readerSideN.textContent = feeds.length ? `${feeds.length} 个` : '';
-}
-
-/** 列表项：折叠时只有标题 + 来源/体积/日期，正文容器留空，展开时才填 */
-function artItemHtml(e) {
-  const src = e.feedName ? shortFeedName(e.feedName) : '';
-  const read = !!e.isRead;
-  const fav = !!e.isFavorite;
-  // 未读圆点始终渲染（已读时用 opacity 藏掉），这样已读/未读两行标题左边缘是对齐的
-  return `
-    <article class="art-item${read ? ' is-read' : ' is-unread'}${fav ? ' is-fav' : ''}" data-id="${escapeHtml(e.id)}">
-      <div class="art-row">
-        <button class="art-head" type="button" aria-expanded="false">
-          <span class="art-dot" aria-hidden="true"></span>
-          <svg class="art-caret" aria-hidden="true" focusable="false"><use href="#i-chevron-right"/></svg>
-          <span class="art-title">${escapeHtml(e.name)}</span>
-          <span class="art-meta">
-            ${src ? `<span class="src-pill">${escapeHtml(src)}</span>` : ''}
-            ${e.size ? `<span class="art-size">${escapeHtml(e.size)}</span>` : ''}
-            <span class="art-date" title="${escapeHtml(fmtFull(e.date))}">${fmtDate(e.date)}</span>
-          </span>
-        </button>
-        <button class="art-star" type="button" data-fav="${escapeHtml(e.id)}"
-          aria-pressed="${fav ? 'true' : 'false'}"
-          aria-label="${fav ? '取消收藏' : '收藏'}"
-          title="${fav ? '取消收藏' : '收藏这篇'}">${fav ? icon('star') : icon('star-o')}</button>
-      </div>
-      <div class="art-body" hidden></div>
-    </article>`;
-}
-
-/** 正文第一行常是「名称：xxx」，跟上面已经显示的标题重复，去掉它 */
-function readerBodyText(e) {
-  let t = e.content || e.desc || '';
-  if (!t) return '';
-  const first = t.split('\n')[0] || '';
-  const m = first.match(/^\s*(?:名\s*称|标\s*题|主\s*题|题\s*目)\s*[：:]\s*(.*)$/);
-  if (m && m[1].trim() === String(e.name || '').trim()) t = t.slice(first.length).replace(/^\n+/, '');
-  return t.trim();
-}
-
-/* 源站点本身没分段时，按句读切成多段，避免一整块糊在屏幕上。
-   只在「这一行确实长」的时候切，短行原样返回 —— 不强行为短文本加分段。
-
-   实现要点：不在 URL 内部断。网盘链接（?pwd=xxxx）极常见，若把 ? ! . 当
-   断点会把链接拦腰砍断，所以先扫出「URL / 邮箱」区间并跳过，再在中日韩句读
-   与英文 . ! 处切。 */
-const LONG_LINE = 110;
-const MIN_SEG = 36;
-const URL_RE = /(?:https?:\/\/|www\.)\S+/gi;
-// 断点：中文句读为主，英文只认 . !（? 太像 query，; 更像列表分隔，都不做断点）
-const BREAK_RE = /(?<=[。！？；!])/g;
-
-function splitLongLine(line) {
-  if (line.length < LONG_LINE) return [line];
-  const spans = [];
-  for (const m of line.matchAll(URL_RE)) spans.push([m.index, m.index + m[0].length]);
-  const inUrl = (i) => spans.some(([a, b]) => i >= a && i < b);
-
-  // 按断点切句
-  const sentences = [];
-  let last = 0;
-  for (const m of line.matchAll(BREAK_RE)) {
-    if (inUrl(m.index)) continue;
-    sentences.push(line.slice(last, m.index));
-    last = m.index;
-  }
-  sentences.push(line.slice(last));
-
-  // 短句合并，避免出现一两个字一段的碎块
-  const out = [];
-  let buf = '';
-  for (const s of sentences) {
-    if (!s.trim()) continue;
-    buf += s;
-    if (buf.trim().length >= MIN_SEG) { out.push(buf.trim()); buf = ''; }
-  }
-  if (buf.trim()) out.push(buf.trim());
-  return out.length ? out : [line];
-}
-
-/** 纯文本正文 → 段落 HTML。已分行的保持原样；超长行按句读细分。
-    以句读结尾的算「散文段」，加 is-prose 让 CSS 做首行缩进 —— 字段行
-    （名称：xxx / 百度：https://…）不缩，否则对齐会歪。 */
-function bodyParagraphs(text) {
-  const paras = [];
-  for (const raw of text.split('\n')) {
-    if (!raw.trim()) continue;
-    for (const seg of splitLongLine(raw)) {
-      const s = seg.trim();
-      if (!s) continue;
-      const prose = /[。！？；!?;]$/.test(s) || /[。！？；!?;][”’")）]*$/.test(s);
-      paras.push(prose ? { cls: 'is-prose', text: s } : { cls: '', text: s });
-    }
-  }
-  return paras;
-}
-
-function parseBlocks(json) {
-  if (!json) return null;
-  try {
-    const a = JSON.parse(json);
-    return Array.isArray(a) && a.length ? a : null;
-  } catch (_) { return null; }
-}
-
-// 首行「名称：/标题：xxx」若与文章标题重复则跳过（避免和阅读页标题栏重复）
-const TITLE_LINE_RE = /^\s*(?:名\s*称|标\s*题|主\s*题|题\s*目)\s*[：:]\s*(.*)$/;
-function isDuplicateTitleLine(txt, name) {
-  const m = txt.match(TITLE_LINE_RE);
-  return !!(m && m[1].trim() === String(name || '').trim());
-}
-
-function artBodyHtml(e) {
-  const parts = [];
-  const blocks = parseBlocks(e.bodyJson);
-  // 块里的图片一律走同源 /api/img 代理（外链直连会被防盗链拦 / 签名过期）；
-  // 已是同源路径（服务端已代理过）原样返回，天然幂等
-  const proxied = (u) => /^https?:\/\//i.test(u) ? '/api/img?u=' + encodeURIComponent(u) : u;
-  const imgTag = (src) => `<img class="art-img" src="${escapeHtml(proxied(src))}" alt="" loading="lazy" decoding="async" title="点击查看大图">`;
-
-  if (blocks) {
-    // 按原文「图文顺序」内联渲染：文本段保留在图片原本出现的位置
-    let i = 0;
-    while (i < blocks.length) {
-      const b = blocks[i];
-      if (b.t === 'img') {
-        // 连续的图片归为一组网格（仍保持它们在原文里的先后次序）
-        const grp = [];
-        while (i < blocks.length && blocks[i].t === 'img') { grp.push(blocks[i].src); i++; }
-        parts.push(grp.length === 1 ? imgTag(grp[0]) : `<div class="art-imgs">${grp.map(imgTag).join('')}</div>`);
-      } else {
-        // 首块若是与标题重复的行，跳过
-        if (i === 0 && isDuplicateTitleLine(b.text, e.name)) { i++; continue; }
-        parts.push(`<div class="art-text">${
-          bodyParagraphs(b.text).map((p) => `<p${p.cls ? ` class="${p.cls}"` : ''}>${escapeHtml(p.text)}</p>`).join('')
-        }</div>`);
-        i++;
-      }
-    }
-    if (!parts.length) parts.push(`<div class="art-text art-text-empty">这条没有正文，点「打开」看原文</div>`);
-  } else {
-    // 老数据 / 纯文本回退：图片收在顶部（单图或网格），正文按句读切段
-    const imgs = (Array.isArray(e.images) && e.images.length) ? e.images : (e.image ? [e.image] : []);
-    if (imgs.length) {
-      parts.push(imgs.length === 1 ? imgTag(imgs[0]) : `<div class="art-imgs">${imgs.map(imgTag).join('')}</div>`);
-    }
-    const text = readerBodyText(e);
-    parts.push(text
-      ? `<div class="art-text">${bodyParagraphs(text)
-          .map((p) => `<p${p.cls ? ` class="${p.cls}"` : ''}>${escapeHtml(p.text)}</p>`).join('')}</div>`
-      : `<div class="art-text art-text-empty">这条没有正文，点「打开」看原文</div>`);
-  }
-
-  if (e.date) {
-    const day = new Date(e.date);
-    parts.push(`<p class="art-pub"><span class="art-pub-label">发布时间</span><time datetime="${day.toISOString()}">${escapeHtml(fmtFull(e.date))}</time></p>`);
-  }
-
-  if (e.tags && e.tags.length) {
-    parts.push(`<div class="art-tags">${e.tags
-      .map((t) => `<span class="mini-tag" data-tag="${escapeHtml(t)}">#${escapeHtml(t)}</span>`).join('')}</div>`);
-  }
-
-  // 正文操作：复制（多条链接可挑选）+ 打开原文章（都是小方块图标按钮）
-  parts.push(`<div class="art-actions">${copyBtnHtml(e)}${openBtnHtml(e)}</div>`);
-
-  return `<div class="art-inner">${parts.join('')}</div>`;
-}
-
-function renderReader() {
-  const feeds = state.feedList || [];
-  const cur = state.rdFeedId == null
-    ? null : feeds.find((f) => String(f.id) === String(state.rdFeedId));
-
-  let title = '全部文章';
-  if (cur) title = shortFeedName(feedTitle(cur));
-  else if (state.rdGroup != null) title = `分组 · ${state.rdGroup || '未分组'}`;
-  else if (state.rdScope === 'unread') title = '未读';
-  else if (state.rdScope === 'favorite') title = '收藏';
-
-  readerTitle.textContent = title;
-
-  // 「全部标为已读」只在这一屏还有未读时才出现
-  readerReadAllBtn.hidden = !state.rdEntries.some((e) => !e.isRead);
-
-  if (!state.rdEntries.length) {
-    readerList.innerHTML = '';
-    readerEmpty.hidden = false;
-    readerEmpty.querySelector('p').textContent = state.rdQ
-      ? `没有找到匹配「${state.rdQ}」的文章`
-      : (state.rdScope === 'unread' ? '没有未读文章了'
-        : state.rdScope === 'favorite' ? '还没有收藏，点文章右侧的星标收藏'
-          : (feeds.length ? '这个频道还没有内容' : '还没有订阅源，去「设置 → 数据源」添加 RSS 地址'));
-    readerCollapseAll.hidden = true;
-    return;
-  }
-
-  readerEmpty.hidden = true;
-  readerList.innerHTML = state.rdEntries.map(artItemHtml).join('');
-
-  // 重绘后恢复展开态（展开过的条目不该因为翻页/筛选又合上）
-  if (state.rdExpanded.size) {
-    readerList.querySelectorAll('.art-item').forEach((el) => {
-      if (state.rdExpanded.has(el.dataset.id)) expandArt(el, el.dataset.id);
-    });
-  }
-  readerCollapseAll.hidden = state.rdExpanded.size === 0;
-}
+/** 通知 ReaderView 重绘 */
+function renderReader() { window.dispatchEvent(new Event('__readerTick')); }
+/** 兼容旧调用名：频道侧栏同样由 ReaderView 渲染，故与 renderReader 同为一次重绘 */
+function renderReaderChannels() { renderReader(); }
 
 /**
  * 阅读页当前的筛选条件 → URLSearchParams。
@@ -1228,7 +863,7 @@ async function loadReader({ reset = false } = {}) {
     state.rdBody.clear();
     state.rdBodyErr.clear();
   }
-  readerMore.hidden = false;
+  renderReader();
 
   try {
     const params = readerFilterParams();
@@ -1243,118 +878,68 @@ async function loadReader({ reset = false } = {}) {
     state.rdEntries = reset ? list : state.rdEntries.concat(list);
     state.rdOffset = state.rdEntries.length;
     state.rdHasMore = !!data.hasMore;
-
-    renderReader();
+    state.rdReadError = false;
   } catch (err) {
     if (!state.rdEntries.length) {
-      readerEmpty.hidden = true;
-      readerList.innerHTML = `<div class="hint" style="padding:32px 4px">加载失败：${escapeHtml(err.message || String(err))}</div>`;
+      state.rdReadError = true;
+      state.rdReadErrorMsg = '加载失败：' + String((err && err.message) || err);
     } else {
       toast('加载失败：' + (err.message || err), false);
     }
   } finally {
     state.rdLoading = false;
-    readerMore.hidden = true;
+    renderReader();
   }
 }
 
-/* ---------- 手风琴模式 ----------
- * 展开新文章时自动收起上一篇，避免一屏堆好几篇长正文。
- * 刻意**不监听失焦 / blur**：点图片看大图、复制正文选中文字、点「打开」跳新标签页、
- * 手机上切到别的 App 再回来，全都会触发 blur —— 那些时刻把文章折掉是帮倒忙。
- * 只在用户主动点开一篇时触发，可预期、零误伤。 */
+/* ---------- 手风琴模式 ---------- */
 let accordionOn = layoutPref.accordion;
-
-const readerAccBtn = $('#readerAccBtn');
-const readerAccLabel = $('#readerAccLabel');
-
-function renderAccordionBtn() {
-  readerAccBtn.setAttribute('aria-pressed', accordionOn ? 'true' : 'false');
-  // 标签刻意用两个字：窄屏也保留（CSS 里给这个按钮单独放开了 .btn-label），
-  // 因为它表示「模式」而不是「动作」，只留图标看不出当前是哪种模式
-  readerAccLabel.textContent = accordionOn ? '单篇' : '多篇';
-  readerAccBtn.title = accordionOn
-    ? '单篇展开：展开一篇时自动收起上一篇（点这里改成多篇）'
-    : '多篇展开：可以同时展开多篇（点这里改成单篇）';
-}
-
-readerAccBtn.addEventListener('click', () => {
+function readerAccordionOn() { return accordionOn; }
+function readerToggleAccordion() {
   accordionOn = !accordionOn;
   setLayout('accordion', accordionOn);   // 按账号持久化
-  renderAccordionBtn();
+  renderReader();
   toast(accordionOn ? '已开启单篇展开' : '已改为可同时展开多篇');
-});
-renderAccordionBtn();
+}
 
-/** 展开：正文懒加载，拉过就缓存，收起再展开不再请求 */
-async function expandArt(el, id) {
-  const body = el.querySelector('.art-body');
-  if (!body) return;
-  // 手风琴：先把其它展开的收掉，再展开这一条（state.rdExpanded 是个 Set，改它之前先复制一份）
+async function expandReaderArt(id) {
+  // 手风琴：先把其它展开的收掉，再展开这一条
   if (accordionOn) {
     for (const openId of Array.from(state.rdExpanded)) {
-      if (String(openId) === String(id)) continue;
-      const other = readerList.querySelector(`.art-item[data-id="${CSS.escape(String(openId))}"]`);
-      if (other) collapseArt(other, openId);
-      else state.rdExpanded.delete(openId);
+      if (String(openId) !== String(id)) state.rdExpanded.delete(openId);
     }
   }
-  el.classList.add('open');
-  el.querySelector('.art-head').setAttribute('aria-expanded', 'true');
-  body.hidden = false;
   state.rdExpanded.add(id);
-  readerCollapseAll.hidden = false;
+  renderReader();
   markEntryRead(id);   // 展开了就算读过了
 
-  if (state.rdBody.has(id)) {
-    body.innerHTML = artBodyHtml(state.rdBody.get(id));
-    bindCardActions(body);
-    return;
-  }
-  if (state.rdBodyErr.has(id)) {
-    body.innerHTML = `<div class="art-inner"><div class="hint">正文加载失败，刷新页面重试</div></div>`;
-    return;
-  }
-
-  body.innerHTML = `<div class="art-inner"><div class="art-loading"><i></i><i></i><i></i></div></div>`;
+  if (state.rdBody.has(id) || state.rdBodyErr.has(id)) return;
   try {
     const res = await apiFetch('/api/entries/' + encodeURIComponent(id));
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    const full = await res.json();
-    state.rdBody.set(id, full);
-    // 等待期间用户可能又把它收起了，那就先不渲染
-    if (state.rdExpanded.has(id)) {
-      body.innerHTML = artBodyHtml(full);
-      bindCardActions(body);
-    }
-  } catch (err) {
+    state.rdBody.set(id, await res.json());
+  } catch (_) {
     state.rdBodyErr.add(id);
-    body.innerHTML = `<div class="art-inner"><div class="hint">正文加载失败：${escapeHtml(err.message || String(err))}</div></div>`;
   }
+  renderReader();
 }
 
-function collapseArt(el, id) {
-  const body = el.querySelector('.art-body');
-  if (!body) return;
-  el.classList.remove('open');
-  el.querySelector('.art-head').setAttribute('aria-expanded', 'false');
-  body.hidden = true;
-  state.rdExpanded.delete(id);
-  if (!state.rdExpanded.size) readerCollapseAll.hidden = true;
+function collapseReaderArt(id) { state.rdExpanded.delete(id); renderReader(); }
+
+function readerToggleArt(id) {
+  if (state.rdExpanded.has(id)) collapseReaderArt(id);
+  else expandReaderArt(id);
 }
 
-function toggleArt(el) {
-  const id = el.dataset.id;
-  if (state.rdExpanded.has(id)) collapseArt(el, id);
-  else expandArt(el, id);
+function readerCollapseAll() {
+  state.rdExpanded.clear();
+  renderReader();
+  toast('已全部收起');
 }
 
 /* ---------- 已读 / 未读 / 收藏 ---------- */
 
-/**
- * 就地改一条的状态：内存、DOM、侧栏计数一次改到位。
- * 计数用「新旧差值」调整，所以同一个 patch 重复应用也不会数错（乐观更新 + 回滚都靠它）。
- */
+/** 就地改一条的状态：内存 + 侧栏计数 + 重绘（原 paintEntryFlag 的就地 DOM 改类名移除） */
 function applyEntryFlag(id, patch) {
   const e = state.rdEntries.find((x) => String(x.id) === String(id));
   if (!e) return;
@@ -1369,31 +954,14 @@ function applyEntryFlag(id, patch) {
   if (wasFav !== e.isFavorite) {
     state.rdFlags.favorite = Math.max(0, (state.rdFlags.favorite || 0) + (e.isFavorite ? 1 : -1));
   }
-  paintEntryFlag(id, e);
-  renderReaderChannels();
+  renderReader();
 
   // 在「收藏」范围里取消收藏 = 明确的「移出这里」，立刻从列表拿掉。
-  // 反过来，「未读」范围里读一篇不会把它抽走 —— 那会把正在看的文章弄没。
   if (state.rdScope === 'favorite' && !e.isFavorite) {
     state.rdEntries = state.rdEntries.filter((x) => String(x.id) !== String(id));
     state.rdOffset = Math.max(0, state.rdOffset - 1);
     renderReader();
   }
-}
-
-/** 只重绘这一条上的标识，不整页重绘（否则展开态和滚动位置都会抖） */
-function paintEntryFlag(id, e) {
-  const el = readerList.querySelector(`.art-item[data-id="${CSS.escape(String(id))}"]`);
-  if (!el) return;
-  el.classList.toggle('is-read', !!e.isRead);
-  el.classList.toggle('is-unread', !e.isRead);
-  el.classList.toggle('is-fav', !!e.isFavorite);
-  const star = el.querySelector('.art-star');
-  if (!star) return;
-  star.innerHTML = e.isFavorite ? icon('star') : icon('star-o');
-  star.setAttribute('aria-pressed', e.isFavorite ? 'true' : 'false');
-  star.setAttribute('aria-label', e.isFavorite ? '取消收藏' : '收藏');
-  star.title = e.isFavorite ? '取消收藏' : '收藏这篇';
 }
 
 /** 打标记：先乐观更新界面，再发请求；失败回滚并提示 */
@@ -1425,8 +993,8 @@ function markEntryRead(id) {
   setEntryFlag(id, { isRead: true });
 }
 
-function toggleFavorite(el) {
-  const id = el.getAttribute('data-fav');
+/** 收藏 / 取消收藏（原 toggleFavorite(el) → 改按 id） */
+function readerToggleFav(id) {
   const e = state.rdEntries.find((x) => String(x.id) === String(id));
   const next = !(e && e.isFavorite);
   setEntryFlag(id, { isFavorite: next }).then((ok) => {
@@ -1434,57 +1002,52 @@ function toggleFavorite(el) {
   });
 }
 
-readerChannels.addEventListener('click', (ev) => {
-  // 「添加频道」：直接打开设置的数据源 tab，避免用户到处找入口
-  const addBtn = ev.target.closest('.rd-ch-add');
-  if (addBtn) { openSettings('source'); setReaderDrawer(false); return; }
-  // 顶部固定入口：全部 / 未读 / 收藏。切范围会清掉频道与分组，避免说不清的叠加
-  const scopeBtn = ev.target.closest('[data-scope]');
-  if (scopeBtn) {
-    const scope = scopeBtn.getAttribute('data-scope');
-    if (scope === state.rdScope && state.rdFeedId == null && state.rdGroup == null) return;
-    state.rdScope = scope;
-    setLayout('rdScope', state.rdScope);   // 默认范围按账号持久化
-    state.rdFeedId = null;
-    state.rdGroup = null;
-    renderReaderChannels();
-    loadReader({ reset: true });
-    syncViewNav();
-    setReaderDrawer(false);
-    scrollReaderTop();
-    return;
-  }
-  // 分组标题也是按钮：点了只看这个分组，再点一次取消
-  const group = ev.target.closest('.rd-ch-group');
-  if (group) {
-    const g = group.getAttribute('data-group') || '';
-    state.rdScope = 'all';   // 看某个分组 = 回到「全部」范围
-    if (g === state.rdGroup) state.rdGroup = null;
-    else { state.rdGroup = g; state.rdFeedId = null; }
-    renderReaderChannels();
-    loadReader({ reset: true });
-    syncViewNav();
-    setReaderDrawer(false);
-    scrollReaderTop();
-    return;
-  }
-  const b = ev.target.closest('.rd-ch');
-  if (!b) return;
-  const raw = b.getAttribute('data-feed');
-  const next = raw ? Number(raw) : null;
-  state.rdScope = 'all';
-  if (next === state.rdFeedId && state.rdGroup == null) return;
-  state.rdFeedId = next;
+/** 正文里的标签：跳到卡片页按这个标签筛选 */
+function readerTagToCards(tag) {
+  state.tag = tag;
+  switchView('cards');
+  render();   // 卡片视图重绘
+  toast('已按标签筛选：#' + tag);
+}
+
+/* ---------- 频道 / 范围 / 分组切换（ReaderView 经桥调用） ---------- */
+function readerSetScope(scope) {
+  if (scope === state.rdScope && state.rdFeedId == null && state.rdGroup == null) return;
+  state.rdScope = scope;
+  setLayout('rdScope', scope);   // 默认范围按账号持久化
+  state.rdFeedId = null;
   state.rdGroup = null;
-  renderReaderChannels();
+  renderReader();
   loadReader({ reset: true });
   syncViewNav();
   setReaderDrawer(false);
   scrollReaderTop();
-});
+}
+function readerSetGroup(g) {
+  state.rdScope = 'all';   // 看某个分组 = 回到「全部」范围
+  if (g === state.rdGroup) state.rdGroup = null;
+  else { state.rdGroup = g; state.rdFeedId = null; }
+  renderReader();
+  loadReader({ reset: true });
+  syncViewNav();
+  setReaderDrawer(false);
+  scrollReaderTop();
+}
+function readerSetFeed(id) {
+  const next = id != null ? Number(id) : null;
+  state.rdScope = 'all';
+  if (next === state.rdFeedId && state.rdGroup == null) return;
+  state.rdFeedId = next;
+  state.rdGroup = null;
+  renderReader();
+  loadReader({ reset: true });
+  syncViewNav();
+  setReaderDrawer(false);
+  scrollReaderTop();
+}
+function readerOpenSource() { openSettings('source'); setReaderDrawer(false); }
 
 /* ---------- 移动端：左侧频道抽屉 ---------- */
-const readerMask = $('#readerMask');
 let readerDrawerLocked = false;   // 抽屉当前是否拿着页面滚动锁
 
 /** 打开/收起左侧频道抽屉。宽屏上没有视觉效果，切走阅读页或窗口变宽时自动收起 */
@@ -1502,11 +1065,9 @@ function scrollReaderTop() {
   window.scrollTo({ top: 0, behavior: 'auto' });
 }
 
-$('#readerMenuBtn').addEventListener('click', () => {
-  setReaderDrawer(!document.body.classList.contains('reader-drawer-open'));
-});
-$('#readerSideClose').addEventListener('click', () => setReaderDrawer(false));
-readerMask.addEventListener('click', () => setReaderDrawer(false));
+// 抽屉开合按钮（菜单 / 关闭 / 遮罩）已随阅读页 React 化，改由 ReaderView 经桥触发
+function readerToggleDrawer() { setReaderDrawer(!document.body.classList.contains('reader-drawer-open')); }
+function readerCloseDrawer() { setReaderDrawer(false); }
 window.addEventListener('resize', () => { if (window.innerWidth > 720) setReaderDrawer(false); });
 
 /* 手势：从左侧滑出频道抽屉（拖拽跟手 + 松手吸附）
@@ -1517,8 +1078,9 @@ window.addEventListener('resize', () => { if (window.innerWidth > 720) setReader
 (() => {
   const EDGE = 60;          // 未打开时，可起手的左边缘宽度（px）
   const THRESH = 48;        // 松手判定开 / 关的最小位移（px）
-  const side = $('#readerSide');
-  if (side) {
+  const getSide = () => document.getElementById('readerSide');
+  const getMask = () => document.getElementById('readerMask');
+  if (true) {
     const drawerW = () => Math.min(272, window.innerWidth * 0.84);
     let x0 = 0, y0 = 0, dragging = false, decided = false, dir = 0;
 
@@ -1526,10 +1088,12 @@ window.addEventListener('resize', () => { if (window.innerWidth > 720) setReader
     function place(px) {
       px = Math.max(0, Math.min(drawerW(), px));
       const pct = px / drawerW();
-      side.style.transform = `translateX(${(-104 + pct * 104).toFixed(2)}%)`;
-      if (readerMask) {
-        readerMask.style.visibility = 'visible';
-        readerMask.style.opacity = String(pct);
+      const side = getSide();
+      if (side) side.style.transform = `translateX(${(-104 + pct * 104).toFixed(2)}%)`;
+      const mask = getMask();
+      if (mask) {
+        mask.style.visibility = 'visible';
+        mask.style.opacity = String(pct);
       }
     }
 
@@ -1551,7 +1115,7 @@ window.addEventListener('resize', () => { if (window.innerWidth > 720) setReader
         if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;        // 等方向明确
         if (Math.abs(dy) > Math.abs(dx)) { dragging = false; return; }  // 竖滑 → 不接管
         decided = true; dir = dx >= 0 ? 1 : -1;
-        side.style.transition = 'none';                          // 跟手期间关掉过渡
+        const side0 = getSide(); if (side0) side0.style.transition = 'none';   // 跟手期间关掉过渡
       }
       if (dir > 0) place(Math.max(0, dx));                        // 从 0 滑出
       else place(drawerW() + dx);                                 // 已开 → 从满位左收（dx 为负）
@@ -1567,35 +1131,25 @@ window.addEventListener('resize', () => { if (window.innerWidth > 720) setReader
       const dx = t.clientX - x0;
       const open = dir > 0 ? dx >= THRESH                        // 右滑够距 → 开
                             : (dx <= -THRESH ? false : true);     // 左滑够距 → 关，否则维持开
-      side.style.transition = '';                                 // 恢复过渡，交给 CSS 吸附
-      side.style.transform = open ? 'translateX(0%)' : 'translateX(-104%)';
-      if (readerMask) readerMask.style.opacity = open ? '1' : '0';
+      const sideEl = getSide();
+      if (sideEl) {
+        sideEl.style.transition = '';                             // 恢复过渡，交给 CSS 吸附
+        sideEl.style.transform = open ? 'translateX(0%)' : 'translateX(-104%)';
+      }
+      const maskEl = getMask();
+      if (maskEl) maskEl.style.opacity = open ? '1' : '0';
       setReaderDrawer(open);                                      // 类切换 + 页面滚动锁
       // 吸附动画结束后把内联样式交还给 CSS，避免后续用按钮开关时内联值压住类样式
       setTimeout(() => {
-        side.style.transform = '';
-        if (readerMask) { readerMask.style.opacity = ''; readerMask.style.visibility = ''; }
+        const side1 = getSide(); if (side1) side1.style.transform = '';
+        const mask1 = getMask(); if (mask1) { mask1.style.opacity = ''; mask1.style.visibility = ''; }
       }, 300);
     }, { passive: true });
   }
 })();
 
-readerList.addEventListener('click', (ev) => {
-  // 收藏星标：必须排在 .art-head 之前判断（它俩是同一行的兄弟节点）
-  const star = ev.target.closest('.art-star');
-  if (star) { toggleFavorite(star); return; }
-  // 展开体里的标签：跳到卡片页按这个标签筛选
-  const tag = ev.target.closest('.mini-tag');
-  if (tag) {
-    state.tag = tag.getAttribute('data-tag');
-    switchView('cards');
-    render();
-    toast('已按标签筛选：#' + state.tag);
-    return;
-  }
-  const head = ev.target.closest('.art-head');
-  if (head) toggleArt(head.closest('.art-item'));
-});
+/* 阅读页条目的点击（星标 / 展开 / 正文标签）已随 React 化移至 src/views/ReaderView.jsx，
+   经桥 readerToggleFav / readerToggleArt / readerTagToCards 触发；旧事件委托移除。 */
 
 /* ---------- 图片灯箱 ----------
  * index.html 与 style.css 里一直有 .lightbox，但之前没有任何 JS 接上它，
@@ -1631,12 +1185,14 @@ document.addEventListener('keydown', (ev) => {
 /* 文章页：滚到底部自动加载下一页（不再需要点「加载更多」）
    用 IntersectionObserver 观察列表末尾的哨兵；加载完若哨兵仍在触发区
    （首屏没被填满，比如大屏 / 筛选后条目少），就再补一次，直到填满或没有更多 */
-const readerSentinel = $('#readerSentinel');
+/* 文章页：滚到底部自动加载下一页。哨兵（#readerSentinel）现由 React 渲染，
+   改用窗口滚动监听触发（与卡片页一致），避免加载时元素尚不存在。 */
 let readerAutoBusy = false;
 
 function readerSentinelNear() {
-  if (!readerSentinel) return false;
-  const r = readerSentinel.getBoundingClientRect();
+  const el = document.getElementById('readerSentinel');
+  if (!el) return false;
+  const r = el.getBoundingClientRect();
   return r.top < window.innerHeight + 500;
 }
 
@@ -1652,20 +1208,18 @@ async function readerAutoLoad() {
   }
 }
 
-if (readerSentinel && 'IntersectionObserver' in window) {
-  new IntersectionObserver((entries) => {
-    if (entries.some((e) => e.isIntersecting)) readerAutoLoad();
-  }, { rootMargin: '500px 0px' }).observe(readerSentinel);
-}
+window.addEventListener('scroll', () => {
+  if (state.tab !== 'reader') return;
+  if (state.rdLoading || !state.rdHasMore || !state.rdEntries.length) return;
+  if (readerSentinelNear()) readerAutoLoad();
+});
 
-/* 「全部标为已读」：条件与当前列表完全一致，标完刷新徽标 */
-readerReadAllBtn.addEventListener('click', async () => {
-  if (readerReadAllBtn.disabled) return;
+/* 「全部标为已读」：条件与当前列表完全一致，标完刷新徽标（ReaderView 经桥 readerReadAll 调用） */
+async function readerReadAll() {
   // 破坏性操作（可能一口气把几百篇标成已读），先确认一次，与「删除订阅/用户」保持一致
   const label = state.rdScope === 'unread' ? '全部未读'
     : (state.rdScope === 'favorite' ? '全部收藏' : '当前列表');
   if (!window.confirm(`确定把「${label}」全部标为已读？此操作不可撤销。`)) return;
-  readerReadAllBtn.disabled = true;
   try {
     const p = readerFilterParams();
     const feedsRaw = p.get('feeds');
@@ -1682,47 +1236,20 @@ readerReadAllBtn.addEventListener('click', async () => {
     const d = await res.json();
     toast(d.updated ? `已标为已读 ${d.updated} 篇` : '这里没有未读文章');
     await loadFeeds();
-    renderReaderChannels();
+    renderReader();
     loadReader({ reset: true });
   } catch (err) {
     toast('操作失败：' + (err.message || err), false);
-  } finally {
-    readerReadAllBtn.disabled = false;
   }
-});
+}
 
-readerCollapseAll.addEventListener('click', () => {
-  readerList.querySelectorAll('.art-item.open').forEach((el) => collapseArt(el, el.dataset.id));
-  toast('已全部收起');
-});
-
-/* 阅读页搜索：防抖后走服务端检索（/api/entries?q=…），与当前频道/分组叠加 */
-const readerSearch = $('#readerSearch');
-const readerSearchClear = $('#readerSearchClear');
-let rdSearchTimer = null;
-
-function setReaderQuery(q) {
+function readerSearch(q) {
   q = String(q || '').trim();
   if (q === state.rdQ) return;
   state.rdQ = q;
+  renderReader();
   loadReader({ reset: true });
 }
-
-readerSearch.addEventListener('input', () => {
-  const v = readerSearch.value.trim();
-  readerSearchClear.hidden = !v;
-  clearTimeout(rdSearchTimer);
-  rdSearchTimer = setTimeout(() => setReaderQuery(v), 280);
-});
-readerSearch.addEventListener('keydown', (ev) => {
-  if (ev.key === 'Enter') { clearTimeout(rdSearchTimer); setReaderQuery(readerSearch.value); }
-});
-readerSearchClear.addEventListener('click', () => {
-  readerSearch.value = '';
-  readerSearchClear.hidden = true;
-  readerSearch.focus();
-  setReaderQuery('');
-});
 
 // 全局快捷键：按 "/" 聚焦当前视图的搜索框（阅读页 / 卡片页）。输入框内正在打字时不拦截，
 // 也不拦截带修饰键的组合（如 Ctrl+/），避免和浏览器/系统快捷键打架
@@ -1738,24 +1265,12 @@ document.addEventListener('keydown', (ev) => {
     return;
   }
   if (state.tab !== 'reader') return;
+  // 阅读页搜索框已 React 化，聚焦经 window.__readerFocusSearch 委托
+  if (!window.__readerFocusSearch) return;
   ev.preventDefault();
-  readerSearch.focus();
-  if (typeof readerSearch.select === 'function') readerSearch.select();
+  window.__readerFocusSearch();
 });
 
-/* 阻止移动端密码管理器 / 浏览器自动填充劫持搜索框：
-   初始设为 readonly（密码管理器在页面加载扫描时视为「不可填充」，不会弹窗），
-   等用户真正点按（pointerdown，先于键盘弹出）或聚焦时再解除 —— 既挡掉自动填充，
-   又不耽误移动端键盘（单次点按即可唤起），桌面端同样生效。配合 input 的
-   autocomplete="off" 与 name="q"/"rq"（非凭据字段名）三重保险。 */
-function defeatAutofill(el) {
-  if (!el) return;
-  el.readOnly = true;
-  const unlock = () => { el.readOnly = false; };
-  el.addEventListener('pointerdown', unlock);
-  el.addEventListener('focus', unlock);
-}
-defeatAutofill(readerSearch);
 
 /* ============================================================
  * AI 子页光标（React AiView 读写；持久化 users.prefs.layout.aiPage）
@@ -2232,15 +1747,14 @@ function focusSearchBox() {
     return;
   }
   if (state.tab !== 'reader') switchView('reader');
-  readerSearch.focus();
-  if (typeof readerSearch.select === 'function') readerSearch.select();
+  if (window.__readerFocusSearch) window.__readerFocusSearch();
 }
 
 
 /* ---------- 3) 阅读页键盘导航 ---------- */
 let kbdIdx = -1;
 function kbdItems() {
-  if (state.tab === 'reader') return Array.prototype.slice.call(readerList.querySelectorAll('.art-item'));
+  if (state.tab === 'reader') return Array.prototype.slice.call(document.querySelectorAll('#readerList .art-item'));
   if (state.tab === 'cards') return Array.prototype.slice.call(document.querySelectorAll(state.view === 'list' ? '#grid .row-item' : '#grid .card'));
   return [];
 }
@@ -2278,11 +1792,11 @@ document.addEventListener('keydown', (ev) => {
     if (ev.key === 'o' || ev.key === 'Enter') {
       ev.preventDefault();
       if (onCards) { const b = el.querySelector('.btn-open'); if (b) b.click(); }
-      else toggleArt(el);
+      else readerToggleArt(el.dataset.id);
     } else if (ev.key === 'f') {
       ev.preventDefault();
       if (onCards) cardSetFlag(el.dataset.id, { isFavorite: !isCardFav(el.dataset.id) });
-      else { const s = el.querySelector('.art-star'); if (s) toggleFavorite(s); }
+      else readerToggleFav(el.dataset.id);
     } else if (ev.key === 'r') {
       ev.preventDefault();
       if (onCards) cardSetFlag(el.dataset.id, { isRead: true });
@@ -2291,7 +1805,8 @@ document.addEventListener('keydown', (ev) => {
   }
 });
 // 列表重绘（翻页 / 筛选 / 点击）后清掉键盘焦点态，避免错位
-readerList.addEventListener('click', clearKbdFocus);
+// 阅读页列表由 React 渲染，用事件委托清键盘焦点态
+document.addEventListener('click', (ev) => { if (ev.target.closest && ev.target.closest('#readerList')) clearKbdFocus(); });
 // 卡片列表由 React 渲染，用事件委托清键盘焦点态（旧 grid 常量已移除）
 document.addEventListener('click', (ev) => { if (ev.target.closest && ev.target.closest('#grid')) clearKbdFocus(); });
 
@@ -2329,7 +1844,7 @@ async function cardSetFlag(id, patch) {
  *   focusSearchBox / exportOpml / shortFeedName / feedTitle
  *   prefersReducedMotion / THEME_MODES / THEME_META
  *   refresh / scrollTop    常用操作的小包装
- *   loadFeeds / loadPage / renderReaderChannels / scheduleAutoRefresh
+ *   loadFeeds / loadPage / renderReaderChannels / scheduleAutoRefresh   （阅读页见 P3c）
  *   setLayout / setSettingsSummary / bindSections / groupFeeds   P2c 数据源面板
  * 注意：必须在文件末尾建立，上游 const（THEME_MODES 等）此时已初始化。
  * 待视图与设置全部 React 化、旧 app.js 退役后，此桥一并拆除。
@@ -2367,4 +1882,10 @@ window.shiyue = {
   cardsLoadMore: () => loadPage(false),
   cardsSetFlag: (id, patch) => cardSetFlag(id, patch),
   copyText, openLinkMenu, fmtDate,
+  // —— v1.9.0 起文章视图 React 化（P3c，组件见 src/views/ReaderView.jsx） ——
+  fmtFull,
+  readerSetScope, readerSetFeed, readerSetGroup, readerOpenSource,
+  readerSearch, readerToggleArt, readerCollapseAll, readerReadAll,
+  readerToggleFav, readerTagToCards, readerToggleAccordion, readerAccordionOn,
+  readerToggleDrawer, readerCloseDrawer,
 };

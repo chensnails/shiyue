@@ -11,7 +11,7 @@
  * apiFetch 桩按 server.js 的真实契约响应（DTO 字段、clampInt、归一化、去重、400/403/404），
  * loadFeeds / cardsLoad 桩复刻 app.js 桥写共享 state 的语义。
  * 拖拽路径用 monkey-patch 的 document.elementFromPoint + 元素级 getBoundingClientRect。 */
-const { JSDOM } = require('jsdom');
+const { JSDOM, VirtualConsole } = require('jsdom');
 const fs = require('fs');
 const path = require('path');
 
@@ -19,6 +19,7 @@ const dom = new JSDOM('<!DOCTYPE html><html><body>' +
   '<div id="settingsRoot"></div>' +
   '<div id="aiRoot"></div>' +
   '<div id="cardsRoot"></div>' +
+  '<div id="readerRoot"></div>' +
   '</body></html>', {
   url: 'http://localhost:3000/',
   pretendToBeVisual: true,
@@ -415,6 +416,9 @@ w.shiyue = {
     feedList: [], feedMeta: {}, groupOrder: [], collapsedGroups: new Set(), tag: null, username: 'tester', role: 'admin',
     entries: [], tags: [], q: '', feedFilter: null, sort: 'new', size: 'all', view: 'grid',
     hasMore: false, loading: false, loadError: false, offset: 0, pageSize: 24,
+    rdEntries: [], rdExpanded: new Set(), rdBody: new Map(), rdBodyErr: new Set(),
+    rdScope: 'all', rdFeedId: null, rdGroup: null, rdQ: '',
+    rdFlags: { total: 2, unread: 1, favorite: 1 }, rdLoading: false, rdReadError: false, rdReadErrorMsg: '',
   },
   loadFeeds: async () => {
     const res = await w.shiyue.apiFetch('/api/feeds');
@@ -482,6 +486,42 @@ w.shiyue = {
     cardsTick();
     return true;
   },
+  // v1.9.0：阅读页桥（P3c，对齐 app.js 语义）
+  fmtFull: (d) => (d ? String(d).slice(0, 16).replace('T', ' ') : ''),
+  readerAccordionOn: () => true,
+  readerSetScope: (scope) => { calls.push(['readerSetScope', scope]); w.shiyue.state.rdScope = scope; w.shiyue.state.rdFeedId = null; w.shiyue.state.rdGroup = null; readerTick(); },
+  readerSetFeed: (id) => { calls.push(['readerSetFeed', id]); w.shiyue.state.rdFeedId = Number(id); w.shiyue.state.rdGroup = null; w.shiyue.state.rdScope = 'all'; readerTick(); },
+  readerSetGroup: (g) => { calls.push(['readerSetGroup', g]); w.shiyue.state.rdGroup = g; w.shiyue.state.rdFeedId = null; readerTick(); },
+  readerOpenSource: () => calls.push(['readerOpenSource']),
+  readerSearch: (q) => { calls.push(['readerSearch', q]); w.shiyue.state.rdQ = q; readerTick(); },
+  readerToggleArt: (id) => {
+    calls.push(['readerToggleArt', id]);
+    const st = w.shiyue.state;
+    if (st.rdExpanded.has(id)) { st.rdExpanded.delete(id); }
+    else {
+      st.rdExpanded.add(id);
+      if (!st.rdBody.has(id)) {
+        st.rdBody.set(id, {
+          id, name: '条目一', tags: ['标签A'], content: '第一段正文。\n第二段正文。',
+          link: 'https://pan.quark.cn/s/abc', links: ['https://pan.quark.cn/s/abc'],
+          sourceUrl: 'https://example.com/a', date: '2026-10-15T10:00:00Z',
+        });
+      }
+    }
+    readerTick();
+  },
+  readerCollapseAll: () => { calls.push(['readerCollapseAll']); w.shiyue.state.rdExpanded.clear(); readerTick(); },
+  readerReadAll: () => calls.push(['readerReadAll']),
+  readerToggleFav: (id) => {
+    calls.push(['readerToggleFav', id]);
+    const e = (w.shiyue.state.rdEntries || []).find((x) => String(x.id) === String(id));
+    if (e) e.isFavorite = !e.isFavorite;
+    readerTick();
+  },
+  readerTagToCards: (t) => calls.push(['readerTagToCards', t]),
+  readerToggleAccordion: () => calls.push(['readerToggleAccordion']),
+  readerToggleDrawer: () => calls.push(['readerToggleDrawer']),
+  readerCloseDrawer: () => calls.push(['readerCloseDrawer']),
   feedTitle: (f) => (!f || typeof f !== 'object' ? (f || '') : f.customTitle || f.title || f.url || ''),
   shortFeedName: (n) => String(n || '').replace(/\s*-\s*Telegram Channel\s*$/i, '').trim(),
   groupFeeds(feeds) {
@@ -504,6 +544,14 @@ const layoutStub = { collapsedGroups: [], sections: {} };
 
 /* 卡片视图（P3b）：复刻 app.js 的 loadPage 语义（数据归共享 state，UI 靠 __cardsTick 重绘） */
 const cardsTick = () => w.dispatchEvent(new w.Event('__cardsTick'));
+const readerTick = () => w.dispatchEvent(new w.Event('__readerTick'));
+
+/** 阅读页条目（P3c 测试用） */
+const READER_ENTRIES = () => ([
+  { id: 'r1', name: '文章一', tags: ['标签A'], size: '2.5G', date: '2026-10-15T10:00:00Z', feedName: '例子星球 - Telegram Channel', isRead: false, isFavorite: false },
+  { id: 'r2', name: '文章二', tags: [], size: '', date: '2026-10-14T10:00:00Z', feedName: 'demo', isRead: true, isFavorite: true },
+]);
+const readerSetEntries = (list) => { w.shiyue.state.rdEntries = list; readerTick(); };
 async function cardsLoad(reset) {
   const s = w.shiyue;
   if (s.state.loading) return;
@@ -534,9 +582,11 @@ async function cardsLoad(reset) {
 require('./.build/mount-settings.cjs');
 require('./.build/mount-ai.cjs');
 require('./.build/mount-cards.cjs');
+require('./.build/mount-reader.cjs');
 const __mount = w.__mount;
 const __mountAi = w.__mountAi;
 const __mountCards = w.__mountCards;
+const __mountReader = w.__mountReader;
 __mount(document.getElementById('settingsRoot'));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1758,6 +1808,179 @@ const withEFP = (el, fn) => {
     if (!C('#empty')) throw new Error('无空态');
     if (C('#empty').textContent.indexOf('还没有订阅源') < 0) throw new Error('文案: ' + C('#empty').textContent);
   });
+
+  // ============ 阅读页（P3c React 化） ============
+  adminFlag = true;
+  w.shiyue.state.tab = 'reader';
+  w.shiyue.state.feedList = [
+    { id: '1', title: '例子星球', customTitle: null, cardEnabled: true, enabled: true, entryCount: 12, unreadCount: 3, groupName: '科技' },
+    { id: '2', title: 'demo', customTitle: null, cardEnabled: true, enabled: true, entryCount: 4, unreadCount: 0, groupName: '' },
+  ];
+  w.shiyue.state.groupOrder = ['科技'];
+  w.shiyue.state.rdFlags = { total: 2, unread: 1, favorite: 1 };
+  const readerEl = w.document.createElement('div');
+  w.document.body.appendChild(readerEl);
+  __mountReader(readerEl);
+  readerSetEntries(READER_ENTRIES());
+  await sleep(60);
+  const R = (sel) => readerEl.querySelector(sel);
+  const RA = (sel) => [...readerEl.querySelectorAll(sel)];
+
+  t('阅读页渲染：侧栏 + 头部 + 列表 + 条目', () => {
+    if (!R('#readerChannels')) throw new Error('无频道侧栏');
+    if (RA('#readerChannels .rd-ch').length !== 5) throw new Error('频道项 ' + RA('#readerChannels .rd-ch').length);
+    if (RA('#readerChannels .rd-ch-group').length !== 2) throw new Error('分组行 ' + RA('#readerChannels .rd-ch-group').length);  // 科技 + 未分组
+    if (!R('#readerChannels .rd-ch-sep')) throw new Error('无分隔');
+    if (!R('#readerChannels .rd-ch-add')) throw new Error('无添加频道');
+    if (RA('#readerList .art-item').length !== 2) throw new Error('条目 ' + RA('#readerList .art-item').length);
+    if (R('#readerSideN').textContent !== '2 个') throw new Error('sideN: ' + R('#readerSideN').textContent);
+  });
+  t('标题与工具按钮显隐', () => {
+    if (R('#readerTitle').textContent !== '全部文章') throw new Error('title: ' + R('#readerTitle').textContent);
+    if (R('#readerAccLabel').textContent !== '单篇') throw new Error('accLabel: ' + R('#readerAccLabel').textContent);
+    if (R('#readerReadAllBtn').hidden) throw new Error('有未读，应显示「全部已读」');
+    if (!R('#readerCollapseAll').hidden) throw new Error('未展开时「全部收起」应隐藏');
+  });
+  t('列表项内容与状态类', () => {
+    const it1 = R('#readerList .art-item[data-id="r1"]');
+    if (!it1.classList.contains('is-unread')) throw new Error('r1 应未读');
+    if (it1.querySelector('.art-title').textContent !== '文章一') throw new Error('标题');
+    if (it1.querySelector('.src-pill').textContent !== '例子星球') throw new Error('来源短名: ' + it1.querySelector('.src-pill').textContent);
+    const it2 = R('#readerList .art-item[data-id="r2"]');
+    if (!it2.classList.contains('is-read') || !it2.classList.contains('is-fav')) throw new Error('r2 状态类不符');
+  });
+
+  // 展开 → 正文
+  R('#readerList .art-item[data-id="r1"] .art-head').click();
+  await sleep(40);
+  t('展开：readerToggleArt + 正文段落/标签/操作', () => {
+    if (!callsOf('readerToggleArt').some((c) => c[1] === 'r1')) throw new Error('未调用 readerToggleArt');
+    const it1 = R('#readerList .art-item[data-id="r1"]');
+    if (!it1.classList.contains('open')) throw new Error('未加 open');
+    const body = it1.querySelector('.art-body');
+    if (body.hidden) throw new Error('正文应显示');
+    if (!body.querySelector('.art-inner')) throw new Error('无 art-inner');
+    if (body.querySelectorAll('.art-text p').length !== 2) throw new Error('段落数 ' + body.querySelectorAll('.art-text p').length);
+    if (!body.querySelector('.art-tags .mini-tag')) throw new Error('无标签');
+    if (!body.querySelector('.art-actions .btn-open')) throw new Error('无打开按钮');
+    if (!body.querySelector('.art-actions .btn-copy')) throw new Error('无复制按钮');
+  });
+  t('展开后「全部收起」出现', () => { if (R('#readerCollapseAll').hidden) throw new Error('应显示'); });
+
+  // 正文标签 → 卡片筛选
+  R('#readerList .art-item[data-id="r1"] .art-tags .mini-tag').click();
+  await sleep(30);
+  t('正文标签 → readerTagToCards', () => {
+    if (!callsOf('readerTagToCards').some((c) => c[1] === '标签A')) throw new Error('未触发');
+  });
+
+  // 收藏
+  R('#readerList .art-item[data-id="r1"] .art-star').click();
+  await sleep(30);
+  t('收藏按钮 → readerToggleFav + 卡片加 is-fav', () => {
+    if (!callsOf('readerToggleFav').some((c) => c[1] === 'r1')) throw new Error('未触发');
+    if (!R('#readerList .art-item[data-id="r1"]').classList.contains('is-fav')) throw new Error('未标记收藏');
+  });
+
+  // 收起
+  R('#readerList .art-item[data-id="r1"] .art-head').click();
+  await sleep(30);
+  t('再点收起：open 移除 + 正文隐藏', () => {
+    const it1 = R('#readerList .art-item[data-id="r1"]');
+    if (it1.classList.contains('open')) throw new Error('仍 open');
+    if (!it1.querySelector('.art-body').hidden) throw new Error('正文应隐藏');
+  });
+
+  // 范围切换
+  RA('#readerChannels .rd-ch')[1].click();
+  await sleep(30);
+  t('范围切换 → readerSetScope(unread) + 高亮', () => {
+    if (!callsOf('readerSetScope').some((c) => c[1] === 'unread')) throw new Error('未触发');
+    if (!RA('#readerChannels .rd-ch')[1].classList.contains('active')) throw new Error('未高亮');
+  });
+
+  // 频道切换
+  RA('#readerChannels .rd-ch')[3].click();
+  await sleep(30);
+  t('频道切换 → readerSetFeed + 标题更新', () => {
+    if (!callsOf('readerSetFeed').length) throw new Error('未触发');
+    if (R('#readerTitle').textContent !== '例子星球') throw new Error('title: ' + R('#readerTitle').textContent);
+  });
+
+  // 搜索（去抖）
+  setVal(R('#readerSearch'), '关键词');
+  await sleep(360);
+  t('搜索：去抖后 readerSearch(q)', () => {
+    if (!callsOf('readerSearch').some((c) => c[1] === '关键词')) throw new Error('未触发: ' + JSON.stringify(callsOf('readerSearch')));
+  });
+  t('搜索清除按钮出现（q 生效后）', () => { if (R('#readerSearchClear').hidden) throw new Error('应显示'); });
+  R('#readerSearchClear').click();
+  await sleep(40);
+  t('清除 → readerSearch("")', () => { if (!callsOf('readerSearch').some((c) => c[1] === '')) throw new Error('未触发'); });
+
+  // 空态（未读）
+  w.shiyue.state.rdScope = 'unread'; w.shiyue.state.rdFeedId = null; w.shiyue.state.rdGroup = null;
+  w.shiyue.state.rdQ = '';
+  readerSetEntries([]);
+  await sleep(30);
+  t('空态文案（未读）', () => {
+    if (R('#readerEmpty').hidden) throw new Error('空态应显示');
+    if (R('#readerEmpty').textContent.indexOf('没有未读文章了') < 0) throw new Error(R('#readerEmpty').textContent);
+  });
+  // 空态（读取失败）
+  w.shiyue.state.rdReadError = true; w.shiyue.state.rdReadErrorMsg = '加载失败：HTTP 500';
+  readerSetEntries([]);
+  await sleep(30);
+  t('空态文案（读取失败）', () => {
+    if (R('#readerEmpty').textContent.indexOf('加载失败：HTTP 500') < 0) throw new Error(R('#readerEmpty').textContent);
+  });
+  w.shiyue.state.rdReadError = false;
+
+  // ============ 冒烟：index.html + app.js 顶层加载无异常 ============
+  // 背景：v1.9.0 迁移阅读页时桥里写了 `readerToggleArt`（函数名却是 toggleReaderArt），
+  // app.js 顶层抛 ReferenceError → 整页 JS 中断、window.shiyue 未建立。这条冒烟专治此类。
+  {
+    const vc2 = new VirtualConsole();
+    const errs = [];
+    vc2.on('jsdomError', (e) => {
+      const d = e.detail;
+      const m = d ? (d.message || String(d)) : e.message;
+      if (!/Not implemented: Window's scrollTo/.test(m)) errs.push(m);
+    });
+    let smokeHtml = fs.readFileSync(path.join(__dirname, '..', '..', 'index.html'), 'utf8');
+    const smokeApp = fs.readFileSync(path.join(__dirname, '..', '..', 'public', 'app.js'), 'utf8').replace(/<\/script/gi, '<\\/script');
+    smokeHtml = smokeHtml.replace(/<script type="module"[^>]*><\/script>/g, '');
+    smokeHtml = smokeHtml.replace(/<script src="\/app\.js"><\/script>/, () => '<script>' + smokeApp + '</script>');
+    const dom2 = new JSDOM(smokeHtml, {
+      url: 'http://localhost:3000/',
+      runScripts: 'dangerously',
+      pretendToBeVisual: true,
+      virtualConsole: vc2,
+      beforeParse(win) {
+        win.fetch = () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ authenticated: true, username: 'tester', role: 'admin' }) });
+        win.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} });
+        win.IntersectionObserver = class { observe() {} unobserve() {} disconnect() {} };
+        win.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+      },
+    });
+    const sw = dom2.window;
+    await sleep(80);
+    t('冒烟：app.js 顶层加载无异常 + 桥已建立', () => {
+      if (errs.length) throw new Error(errs[0]);
+      if (!sw.shiyue) throw new Error('window.shiyue 未建立');
+    });
+    t('冒烟：桥的阅读页 / 卡片 / AI 函数齐全', () => {
+      const s2 = sw.shiyue;
+      const need = [
+        'readerSetScope', 'readerSetFeed', 'readerSetGroup', 'readerOpenSource', 'readerSearch',
+        'readerToggleArt', 'readerCollapseAll', 'readerReadAll', 'readerToggleFav', 'readerTagToCards',
+        'readerToggleAccordion', 'readerAccordionOn', 'readerToggleDrawer', 'readerCloseDrawer', 'fmtFull',
+        'cardsSearch', 'cardsView', 'filterEntries', 'getAiPage', 'promptInstall',
+      ];
+      for (const k of need) if (typeof s2[k] !== 'function') throw new Error('缺桥函数 ' + k);
+    });
+    sw.close();
+  }
 
   let fail = 0;
   results.forEach(([s, n]) => { if (s === 'FAIL') fail++; console.log(s, n); });

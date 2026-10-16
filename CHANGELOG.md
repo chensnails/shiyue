@@ -18,6 +18,23 @@
 
 ---
 
+## [1.9.0] — 2026-10-17
+
+新增：
+
+- **「文章」视图 React 化**（React 渐进式迁移的 P3c 阶段，也是三大视图的最后一块）：视图内容整体迁往 `src/views/ReaderView.jsx`，挂载到 `index.html` 的 `#readerRoot`（外层 `#readerView` 容器仍由旧 `switchView` 控制显隐）；类名 / ID / data 属性、视觉与交互保持不变。**至此三大视图（文章 / 卡片 / AI）全部 React 化。**
+  - 渲染覆盖：左侧频道侧栏（范围入口 全部/未读/收藏、分组行、频道项与未读徽标、添加频道）、头部（标题、手风琴开关、全部已读、全部收起、频道抽屉按钮）、阅读页搜索框、条目列表（未读/已读/收藏态、展开箭头）、展开后的正文（图文按原顺序内联、图片经 `/api/img` 代理、句读分段、发布时间、标签、复制/打开）、空态（各种文案）、加载更多、滚动哨兵、页脚。
+  - 采用 **「共享状态 + tick」** 范式（同卡片视图）：数据与逻辑仍归旧 app.js（`state.rdEntries` / `rdExpanded` / `rdBody` / `rdScope` / `rdFeedId` / `rdGroup` / `rdQ` / `rdFlags`，以及 `loadReader` / 展开取正文 / 已读收藏 / 抽屉 / 边缘手势 / 无限滚动 / 键盘导航 / 自动刷新）；控件经桥 `readerSetScope` / `readerSetFeed` / `readerSetGroup` / `readerSearch` / `readerToggleArt` / `readerToggleFav` / `readerCollapseAll` / `readerReadAll` / `readerTagToCards` / `readerToggleAccordion` / `readerToggleDrawer` / `readerCloseDrawer` / `readerOpenSource` 改共享 state；app.js 需刷新阅读页 UI 时派发 `window.__readerTick`。
+- 迁移中顺手清理落后实现（遵循「技术落后 / 体验不好的可丢弃」原则）：
+  - 正文由 `innerHTML` 字符串拼接（`artBodyHtml` / `artItemHtml` / `renderReaderChannels` / `renderReader`）改为 JSX 组件；分段纯函数（`splitLongLine` / `bodyParagraphs` / `parseBlocks`）下沉组件。
+  - 展开 / 收起、已读 / 收藏由就地改 DOM（`expandArt` / `collapseArt` / `paintEntryFlag`）改为改共享 state 后 tick 重绘；正文懒加载改为「展开时写入 `state.rdBody`、组件按 state 渲染」。
+  - 无限滚动哨兵由 `IntersectionObserver`（加载时元素尚未存在）改为窗口滚动监听（与卡片页统一）。
+  - 抽屉边缘手势对 `#readerSide` / `#readerMask` 改为惰性查询（React 渲染的节点在脚本加载时还不存在）。
+  - 清理阅读页迁出后彻底无引用的旧函数：`bindCardActions` / `copyBtnHtml` / `openBtnHtml` / `copyableLinks` / `doCopy` / `icon`（app.js 2371 → 1892 行）。
+- **测试**：UI 回归测试补 ReaderView 套件（渲染 / 展开收起 / 收藏 / 标签跳转 / 范围与频道切换 / 搜索去抖 / 空态）与两条**冒烟断言**（加载真实 `index.html` + `app.js`，断言顶层无异常、`window.shiyue` 桥函数齐全）——后一条正是为拦截本次迁移中出现过的「桥引用未定义函数导致 app.js 顶层抛错」；共 **179/179**。
+
+---
+
 ## [1.8.2] — 2026-10-16
 
 修复：

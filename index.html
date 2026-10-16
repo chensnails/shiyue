@@ -131,64 +131,8 @@
 <!-- 卡片：默认隐藏，由 switchView 决定显示哪个页面（默认是「文章」）。内容已 React 化，组件见 src/views/CardsView.jsx，挂载到下面的 #cardsRoot -->
 <div id="cardsView" hidden><div id="cardsRoot"></div></div>
 
-<!-- 文章：左频道 / 右文章，点标题展开全文 -->
-<div class="wrap reader" id="readerView">
-  <div class="reader-mask" id="readerMask"></div>
-  <aside class="reader-side" id="readerSide">
-    <div class="reader-side-head">
-      <span>频道</span>
-      <span class="reader-side-n" id="readerSideN"></span>
-      <button class="reader-side-close" id="readerSideClose" type="button" aria-label="收起频道列表"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-x"/></svg></button>
-    </div>
-    <nav class="reader-channels" id="readerChannels"></nav>
-  </aside>
-
-  <section class="reader-main">
-    <div class="reader-head">
-      <button class="btn btn-ghost btn-sm reader-menu-btn" id="readerMenuBtn" type="button" aria-label="打开频道列表">
-        <svg class="ico" aria-hidden="true" focusable="false"><use href="#i-menu"/></svg> 频道
-      </button>
-      <div class="reader-head-text">
-        <h2 id="readerTitle">全部频道</h2>
-      </div>
-      <div class="reader-head-tools">
-        <!-- 手风琴开关：展开新文章时自动收起上一篇。只由点击触发，不监听失焦，
-             否则点图片看大图 / 复制正文 / 切到别的 App 都会被误判成「离开了」 -->
-        <button class="btn btn-ghost btn-sm" id="readerAccBtn" type="button" aria-pressed="true"
-                title="单篇展开：展开一篇时自动收起上一篇（点这里切换）">
-          <svg class="ico" aria-hidden="true" aria-hidden="true" focusable="false"><use href="#i-accordion"/></svg><span class="btn-label" id="readerAccLabel">单篇</span>
-        </button>
-        <button class="btn btn-ghost btn-sm" id="readerReadAllBtn" type="button" hidden title="把当前列表全部标为已读">
-          <svg class="ico" aria-hidden="true" aria-hidden="true" focusable="false"><use href="#i-check-circle"/></svg><span class="btn-label">全部已读</span>
-        </button>
-        <button class="btn btn-ghost btn-sm" id="readerCollapseAll" type="button" hidden title="收起所有展开的文章">
-          <svg class="ico" aria-hidden="true" aria-hidden="true" focusable="false"><use href="#i-chevrons-up"/></svg><span class="btn-label">全部收起</span>
-        </button>
-      </div>
-    </div>
-
-    <div class="reader-search">
-      <svg class="search-ico" aria-hidden="true" focusable="false"><use href="#i-search"/></svg>
-      <input id="readerSearch" name="rq" type="search" placeholder="搜索标题、描述或标签…（服务端检索）" autocomplete="off" enterkeyhint="search" aria-label="搜索文章">
-      <button class="reader-search-clear" id="readerSearchClear" type="button" hidden aria-label="清除搜索"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-x"/></svg></button>
-    </div>
-
-    <div class="reader-list" id="readerList"></div>
-
-    <div class="empty" id="readerEmpty" hidden>
-      <div class="empty-ico"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-inbox"/></svg></div>
-      <p>这里还没有内容</p>
-    </div>
-
-    <div class="loadmore-wrap">
-      <div class="loading-dots" id="readerMore" hidden><i></i><i></i><i></i></div>
-      <!-- 滚动到它附近就自动加载下一页（IntersectionObserver 观察） -->
-      <div class="reader-sentinel" id="readerSentinel" aria-hidden="true"></div>
-    </div>
-
-    <footer class="foot">点标题展开全文，再点一次收起</footer>
-  </section>
-</div>
+<!-- 文章：左频道 / 右文章，点标题展开全文（已 React 化，组件见 src/views/ReaderView.jsx，挂载到 #readerRoot） -->
+<div class="wrap reader" id="readerView"><div id="readerRoot"></div></div>
 
 <!-- AI：大模型能力聚合页（已 React 化，组件见 src/ai/AiView.jsx，挂载到下面的 #aiRoot） -->
 <div class="wrap" id="aiView" hidden><div id="aiRoot"></div></div>
