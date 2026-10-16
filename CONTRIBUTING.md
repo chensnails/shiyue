@@ -23,10 +23,10 @@
 - **滚动锁用计数**：设置面板、图片灯箱、频道抽屉都可能开着，`lockPageScroll()` / `unlockPageScroll()` 靠 `scrollLockCount` 配对；只给 body 写 `overflow:hidden` 在 iOS 上挡不住惯性滚动，必须 `position:fixed` + 负 `top`。
 - **吸顶偏移量不写死**：阅读页头部吸在顶栏下面，`top` 取 CSS 变量 `--topbar-h`，由 `ResizeObserver` 实测顶栏高度写入 —— 屏宽、程序名显隐、刘海屏安全区都会改变它。
 - **穿透只发生在遮罩空白处**：弹层内部（`.modal-body` 是 `overflow:hidden`）本来就不穿透。用真实浏览器验证滚动锁时，滚轮坐标要打在遮罩上，打在弹层里会得到假阳性。
-- **折叠分组用原生 `<details>`**：键盘可操作、无障碍语义天然正确、不需要 JS 维护开合；JS 只负责把状态记进 localStorage，以及更新标题右侧的摘要行。**动态重绘的区域必须在每次渲染后再调一次 `bindSections(root)`** —— 状态页每 30 秒重绘，漏了这一步用户展开的分组会被冲掉。
+- **折叠分组用原生 `<details>`**：键盘可操作、无障碍语义天然正确、不需要 JS 维护开合；JS 只负责把状态记进 localStorage，以及更新标题右侧的摘要行。**动态重绘的区域必须在每次渲染后再调一次 `bindSections(root)`** —— 状态页每 30 秒重绘，漏了这一步用户展开的分组会被冲掉。**（v1.6.0 起折叠分组的开合按账号持久化到 `users.prefs.layout.sections`；React 面板在挂载 / 重绘后经桥 `bindSections(ref)` 复用同一机制。）**
 - **每个 tab 只能有一个滚动容器**：`.tab-pane` 是 flex 列（`flex:1; min-height:0`），`.pane-scroll` 负责滚，`.pane-foot` 固定。新增 tab 时漏了这条，内容会被 `.modal-body` 的 `overflow:hidden` 直接裁掉。
-- **AI 页是「容器 + 子页」结构**：`#aiView` 是一个普通 `.wrap` 页面，内部用 `#aiNav`（`.ainav-btn[data-ai]`）+ 若干 `.ai-pane[data-ai-pane]` 靠 `hidden` 切换。加一个新 AI 功能只要三步：`#aiNav` 里加个按钮、加一个 `.ai-pane`、需要拉数据的话在 `AI_LOADERS` 里登记一个加载函数。当前子页记在 `localStorage`，`switchView('ai')` 会回到离开前那一页。
-- **角色显隐集中在一个函数里**：`applyRoleUI()` 按 `state.role` 决定管理员专属部分的显隐（模型 / 状态 tab、采集参数、用户管理、保存设置、日报设置），并在 `init()` 里拿到 `/api/session` 的 `role` 后调用一次。`switchTab()` 与 `switchAiPage()` 各自再兜一层（非管理员请求管理员 tab / 子页时回落），这样**深链**（`#ai/settings`）也不会漏进去。新增管理员专属 UI 时，请在 `applyRoleUI()` 里加一行，别在别处散着判角色。
+- **AI 页是「容器 + 子页」结构**：`#aiView` 是一个普通 `.wrap` 页面，内部用 `#aiNav`（`.ainav-btn[data-ai]`）+ 若干 `.ai-pane[data-ai-pane]` 靠 `hidden` 切换。加一个新 AI 功能只要三步：`#aiNav` 里加个按钮、加一个 `.ai-pane`、需要拉数据的话在 `AI_LOADERS` 里登记一个加载函数。当前子页记在 `localStorage`，`switchView('ai')` 会回到离开前那一页。**（v1.7.0 起 AI 视图已 React 化 —— 子页切换 / 加载见 `src/ai/AiView.jsx`，`AI_LOADERS` 与 `localStorage` 存储已退役，改按账号持久化 `layout.aiPage`。）**
+- **角色显隐集中在一个函数里**：`applyRoleUI()` 按 `state.role` 决定管理员专属部分的显隐（模型 / 状态 tab、采集参数、用户管理、保存设置、日报设置），并在 `init()` 里拿到 `/api/session` 的 `role` 后调用一次。`switchTab()` 与 `switchAiPage()` 各自再兜一层（非管理员请求管理员 tab / 子页时回落），这样**深链**（`#ai/settings`）也不会漏进去。新增管理员专属 UI 时，请在 `applyRoleUI()` 里加一行，别在别处散着判角色。**（v1.6.0 起大部分管理员专属 UI 已移入各自 React 面板（按 `admin` 条件渲染），`applyRoleUI()` 现在只把 admin 标志推给设置弹层宿主；新的管理员专属 UI 直接在对应 React 组件里判 `isAdmin()`。）**
 - **hash 只在启动时解析一次**（`init()` 里的路由），改 `location.hash` 不会重新路由 —— 深链是要在冷启动时用的。支持 `#ai`、`#ai/settings`、`#favorite`、`#unread`、`#cards`，以及老链接 `#digest`（落到 AI → 日报）。`localStorage` 里的老页面值 `'digest'` 也会被 `currentTab()` 自动迁成 `'ai'`。
 - **视口高度一律用 `dvh`，不要用 `vh`**：手机浏览器的 `vh` 取的是「地址栏收起时」的大视口高度，比当前真正看得见的区域高，于是弹层底部的按钮、页面页脚会被地址栏压住。凡是「必须塞进可视区」的高度（弹层 `max-height`、遮罩与灯箱的高度、抽屉高度、图片 `max-height`）都写成 `100vh;` + `100dvh;` 两行 —— 不支持的浏览器自动回退，不会因为一条无效声明把整个属性丢掉。
   可滚动内容的底部另有一层保险：`@supports (height: 100svh)` 里给 `body` 补出 `clamp(0px, 100vh - 100svh, 140px)` 的 `padding-bottom`，也就是「浏览器底栏高度」。用 `svh`（静态）而不是 `dvh` 是为了避免滚动时高度来回抖；`clamp` 的下限防负值让整条声明失效，上限防个别 App 内置浏览器留出大片空白。桌面与 PWA 下 `100vh == 100svh`，这条等于不生效。
@@ -37,7 +37,9 @@
 
 **后端：用 PGlite 跑真实 SQL。** `pg-mem` 是纯 JS 模拟，缺 `xmax`、不支持 `UPDATE` 目标表别名与 plpgsql，会把合法 SQL 判错；改用 **`@electric-sql/pglite`**（编译成 WASM 的真实 Postgres），上述语法与迁移里的 `DO $$` 块都能跑。做法：给 `pg.Pool` 写一个薄垫片（`query` / `connect` / `on` / `end`，`connect` 返回同一个单连接客户端即可，事务靠 `BEGIN` / `COMMIT` 正常走），再用 `Module._load` 把 `require('pg')` 换成垫片。垫片有个坑：**`SELECT` 的 `affectedRows` 是 0，不能直接当 `rowCount`**，否则 `hasDigest()` 之类 `rowCount > 0` 的判断会误判 —— 写成 `affectedRows || rows.length`。测完记得**两条路径都跑**：全新库（`migrate()` 直接建多用户结构）+ **老库升级**（手工造旧 schema → `migrate()` → `ensureAdmin()` → `bootstrapOwnership()`，断言数据没丢、归属回填、约束收紧）。
 
-**前端：假后端 + 无头 Edge。** `public/` 用假后端（纯内存 API）静态托管，CDP 连无头 Edge 用 `Runtime.evaluate` 取断言结果。几个反复踩过的坑：
+**前端：UI 回归测试（推荐先跑）。** `npm run test:ui` 在 jsdom 里挂载真实的 React 组件（设置弹层六面板 / AI 视图 / 卡片视图），用桩 `window.shiyue` + 迷你内存后端跑 160+ 断言，秒级出结果、无需浏览器。测试资产在 `tests/ui/`（`ui-regression.cjs` 断言 + `mount-*.jsx` 挂载入口 + `build.mjs` 用 esbuild 打包）。新增 React 组件时，建议同步补一个 `mount-*.jsx` 与对应断言。
+
+**前端：假后端 + 无头 Edge（端到端兜底）。** `public/` 用假后端（纯内存 API）静态托管，CDP 连无头 Edge 用 `Runtime.evaluate` 取断言结果。几个反复踩过的坑：
 
 - 工具沙箱内 Edge 起不来（sandbox init 失败），且**沙箱内外网络隔离** —— 假后端与 Edge 必须在同一侧；`&` 起的后台进程会随命令结束被杀，所以写成**一个** `/tmp/run-*.sh`：起假后端 → 等端口 → 起 Edge → 跑 CDP 脚本 → `trap` 收尾杀进程。
 - 注入到 `index.html` 的自动测试脚本会**污染交互测试**（它点开某条后，你再点同一处等于把它收起，表现为「展开失效」）—— 注入必须按需开关（如 `?inject=1`）。

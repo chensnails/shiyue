@@ -27,8 +27,6 @@ const state = {
   groupOrder: [],     // 分组顺序（显式保存的串名数组，未分组不计入）
   collapsedGroups: new Set(),  // 分组折叠状态（折叠的分组名集合，按账号持久化）
   tags: [],           // 服务端返回的标签计数
-  config: null,
-  digest: null,       // { dates: [], current: null }
   username: null,
   role: null,         // 'admin' | 'user' —— 决定设置里哪些 tab / 分组可见
 
@@ -554,8 +552,6 @@ function bindCardActions(root) {
 // 开合状态由 React 组件同步到 window.__settingsOpen，旧 #settingsMask / #settingsSummary
 // DOM 已移除；openSettings / closeSettings 委托给 React 宿主 window.__settingsHost。
 
-/* 管理员专属的 tab（状态）；模型配置每用户独立，普通用户也能配 */
-const ADMIN_TABS = ['status'];
 const isAdmin = () => state.role === 'admin';
 
 /** 按角色显隐：设置弹层的管理员专属 tab 由 React 外壳过滤；
@@ -607,13 +603,6 @@ function openSettings(tab) {
 function closeSettings() {
   const host = window.__settingsHost;
   if (host && host.close) host.close();
-}
-
-function showResult(el, ok, msg) {
-  if (!el) return;
-  el.textContent = msg;
-  el.className = 'test-result show ' + (ok ? 'ok' : 'err');
-  if (ok) setTimeout(() => { el.className = 'test-result'; }, 4000);
 }
 
 /** 设置弹层副标题文本（纯计算：React 宿主打开弹层时也要用同一份） */
@@ -1890,7 +1879,6 @@ requestAnimationFrame(() => requestAnimationFrame(bootThemeAndView));
  * 首屏由 index.html <head> 的内联脚本从服务端注入的 window.__APPEARANCE__ 应用
  * （否则会先闪一下默认值），这里负责后续修改、持久化与界面回填。
  * ============================================================ */
-const APPR_KEY = 'shiyue.appearance.v1'; // 仅用于旧数据一次性迁移，迁移后不再写入本机
 // 默认值与合法值表（与服务端 APPEARANCE_DEFAULTS / APPEARANCE_KEYS 对齐）
 const APPR_DEFAULTS = { theme: 'auto', accent: 'blue', fontSize: 'm', readerFont: 'sans', readerLh: 'm', readerWidth: 'm' };
 // 键名 → html 属性名；同时这个属性名就是控件上用来标值的 data 属性名

@@ -18,6 +18,16 @@
 
 ---
 
+## [1.8.1] — 2026-10-16
+
+工程收尾（无用户可见变更，为 v2.0.0 拆桥做准备）：
+
+- **UI 回归测试纳入仓库**：把原本散在本地缓存目录的 jsdom 运行时测试迁入 `tests/ui/`（`ui-regression.cjs` 断言 + `mount-*.jsx` 三个挂载入口 + `build.mjs` 用 esbuild 打包），新增 `npm run test:ui` 脚本与 `jsdom` / `esbuild` devDependency —— 现在在干净环境（含 CI）也能一键复跑 160+ 断言，覆盖设置弹层六面板 / AI 视图 / 卡片视图。
+- **清理迁移后死代码**：移除 `app.js` 中迁移后已无引用的 `showResult()`、`ADMIN_TABS`、`APPR_KEY` 与 `state.config` / `state.digest` 字段（设置面板 / AI 视图迁出后遗留）。
+- **文档**：README / CONTRIBUTING / 开发文档补充「两种迁移范式」（自持状态 vs 共享状态 + tick）、UI 测试运行方式、P3c（文章视图）待迁与 P4 拆桥清单。
+
+---
+
 ## [1.8.0] — 2026-10-16
 
 新增：

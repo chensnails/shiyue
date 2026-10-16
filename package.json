@@ -1,6 +1,6 @@
 {
   "name": "shiyue",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "private": true,
   "description": "拾阅（shiyue）—— RSS 驱动的资源卡片站与每日 AI 简报，数据存 PostgreSQL",
   "main": "server.js",
@@ -8,7 +8,8 @@
     "start": "node server.js",
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:ui": "node tests/ui/build.mjs && node tests/ui/ui-regression.cjs"
   },
   "dependencies": {
     "pg": "^8.23.1",
@@ -16,6 +17,8 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^5.0.0",
+    "esbuild": "^0.25.12",
+    "jsdom": "^30.1.3",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "vite": "^7.1.0"
