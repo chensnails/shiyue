@@ -18,6 +18,22 @@
 
 ---
 
+## [1.8.0] — 2026-10-16
+
+新增：
+
+- **「卡片」视图 React 化**（React 渐进式迁移的 P3b 阶段）：视图内容整体迁往 `src/views/CardsView.jsx`，挂载到 `index.html` 的 `#cardsRoot`（外层 `#cardsView` 容器仍由旧 `switchView` 控制显隐）；类名 / ID / data 属性、视觉与交互保持不变。
+  - 数据与状态仍由旧 app.js 持有（`state.entries` / `tags` / `q` / `tag` / `feedFilter` / `sort` / `size` / `view` / `hasMore` / `loading`，以及 `loadPage` / 自动刷新 / 收藏 PATCH 等逻辑）；组件只负责渲染 + 控件，控件经桥 `cardsSearch` / `cardsFilterFeed` / `cardsSort` / `cardsSize` / `cardsView` / `cardsTag` / `cardsLoadMore` / `cardsSetFlag` 改共享 state；app.js 每次需要刷新卡片 UI 时派发 `window.__cardsTick`，组件监听后读实时 state 重绘（沿用 SourcePane 的「共享状态 + tick」约定）。
+  - 渲染覆盖：工具栏（搜索框 / 频道筛选 optgroup / 排序 / 体积筛选 / 卡片·列表视图切换）、标签栏、卡片网格与列表行（懒加载图片 + 失败重试一次再兜底、来源短名、体积、日期、标签、复制 / 打开按钮）、骨架屏、各类空态（无订阅源 / 卡片开关全关 / 无匹配 / 该标签无内容 / 加载失败）、加载更多、页脚。
+  - 跨视图共享机制仍留在 app.js：自动刷新 / 新内容浮标（`fetchHead` / `applyFresh` / `checkForNew`）、`j/k` 键盘导航（`kbdItems` 查 `#grid` 内 `.card`/`.row-item`）、收藏 / 已读（`cardSetFlag`）、`/` 聚焦搜索（经 `window.__cardsFocusSearch` 委托到组件输入框）。
+- 迁移中顺手清理落后实现（遵循「技术落后 / 体验不好的可丢弃」原则）：
+  - 卡片 / 列表由 `innerHTML` 字符串拼接（`cardHtml` / `rowHtml`）改为 JSX 组件；骨架屏由命令式 `innerHTML` 改为 JSX。
+  - 空态、加载态、视图模式高亮由就地操作 DOM（`emptyBox` / `loadMoreBtn` / `viewModeEl`）改为 React 条件渲染；首屏失败由改空态文案改为 `state.loadError` 标志驱动。
+  - 收藏 / 已读由就地改 DOM 类名（`paintCardFlag`）改为改共享 state 后 tick 重绘。
+  - 频道筛选兜底（筛选频道被删 / 关卡片开关后回落全部）从 `renderFeedSelect` 移入 `loadFeeds`。
+
+---
+
 ## [1.7.0] — 2026-10-16
 
 新增：

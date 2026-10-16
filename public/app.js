@@ -12,6 +12,7 @@ const state = {
   offset: 0,
   hasMore: true,
   loading: false,
+  loadError: false,   // 首屏加载失败（React 卡片视图据此显示错误空态）
   q: '',
   sort: 'new',        // 阅读页排序：new 最新 / old 最早 / name 名称（按账号持久化）
   size: 'all',
@@ -89,17 +90,9 @@ if (_sortSel) _sortSel.value = state.sort;
 /* ---------------- DOM ---------------- */
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
-const grid = $('#grid');
-const skeleton = $('#skeleton');
-const emptyBox = $('#empty');
-const tagBar = $('#tagBar');
-const loadMoreBtn = $('#loadMoreBtn');
-const loadingMore = $('#loadingMore');
 const toastEl = $('#toast');
 const statCount = $('#statCount');
 const subtitle = $('#subtitle');
-const feedSelect = $('#feedSelect');
-const viewModeEl = $('#viewMode');
 /* 阅读页 */
 const readerChannels = $('#readerChannels');
 const readerSideN = $('#readerSideN');
@@ -271,22 +264,14 @@ function loadCollapsedGroups() {
 /** 把模式写到 state / DOM / 按钮态；persist=true 时才写账号（手动切换才记） */
 function applyViewMode(mode, persist) {
   state.view = VIEW_MODES.indexOf(mode) >= 0 ? mode : 'grid';
-  const isList = state.view === 'list';
   if (persist) setLayout('view', state.view);
-
-  grid.classList.toggle('list-mode', isList);
-  skeleton.classList.toggle('list-mode', isList);
-  viewModeEl.querySelectorAll('.viewmode-btn').forEach((b) => {
-    b.classList.toggle('active', b.getAttribute('data-mode') === state.view);
-  });
+  render();   // 通知 CardsView 重绘（含 viewMode 按钮态）
 }
 
-/** 用户点击切换：切完立刻按新模式重绘（有数据就重绘数据，没数据就重绘骨架） */
+/** 用户点击切换：切完立刻按新模式重绘 */
 function setViewMode(mode) {
   if (mode === state.view) return;
-  applyViewMode(mode, true);
-  if (state.entries.length) render();
-  else renderSkeletons();
+  applyViewMode(mode, true);   // 内部已 render()
   toast(state.view === 'list' ? '已切换到列表视图' : '已切换到卡片视图');
 }
 
@@ -314,27 +299,13 @@ async function loadFeeds() {
   state.collapsedGroups = loadCollapsedGroups();
   // 侧栏「全部 / 未读 / 收藏」的计数跟频道一起回来，省一次请求
   if (data.flags) state.rdFlags = data.flags;
-  renderFeedSelect();
-  return data;
-}
-
-/** 工具栏的频道筛选下拉：只列「卡片开关」打开的频道，按分组用 optgroup 归拢 */
-function renderFeedSelect() {
-  const feeds = (state.feedList || []).filter((f) => f.cardEnabled);
-  const cur = state.feedFilter == null ? '' : String(state.feedFilter);
-
-  const opt = (f) => `<option value="${escapeHtml(f.id)}">${escapeHtml(shortFeedName(feedTitle(f)))}（${f.entryCount}）</option>`;
-  let html = `<option value="">全部频道（${feeds.length}）</option>`;
-  for (const g of groupFeeds(feeds)) {
-    const opts = g.feeds.map(opt).join('');
-    html += g.name
-      ? `<optgroup label="${escapeHtml(g.name)}">${opts}</optgroup>`
-      : opts;
+  // 之前筛选的频道被关掉卡片开关 / 删掉了，回落到全部（旧 renderFeedSelect 的兜底职责）
+  if (state.feedFilter != null
+    && !(state.feedList || []).some((f) => String(f.id) === String(state.feedFilter) && f.cardEnabled)) {
+    state.feedFilter = null;
   }
-  feedSelect.innerHTML = html;
-  feedSelect.value = cur;
-  // 之前筛选的频道被关掉卡片开关 / 删掉了，回落到全部
-  if (feedSelect.value !== cur) { state.feedFilter = null; feedSelect.value = ''; }
+  render();
+  return data;
 }
 
 async function loadPage(reset = false) {
@@ -344,10 +315,7 @@ async function loadPage(reset = false) {
   if (reset) { state.offset = 0; state.hasMore = true; state.entries = []; }
 
   const first = state.entries.length === 0;
-  if (first) { skeleton.hidden = false; renderSkeletons(); grid.hidden = true; }
-  else { loadingMore.hidden = false; }
-  loadMoreBtn.hidden = true;
-  emptyBox.hidden = true;
+  render();   // 立刻反映骨架 / 加载态（渲染归 React 卡片视图）
 
   try {
     const qs = new URLSearchParams({
@@ -371,22 +339,13 @@ async function loadPage(reset = false) {
 
     state.offset += list.length;
     state.hasMore = !!data.hasMore && list.length > 0;
-
-    skeleton.hidden = true;
-    grid.hidden = false;
-    render();
+    state.loadError = false;
   } catch (err) {
-    skeleton.hidden = true;
-    grid.hidden = false;
-    if (first) {
-      emptyBox.hidden = false;
-      emptyBox.querySelector('p').textContent = '数据加载失败，请稍后点击「刷新」重试';
-    } else {
-      toast('加载失败：' + (err.message || err), false);
-    }
+    if (first) state.loadError = true;   // 首屏失败 → React 显示错误空态
+    else toast('加载失败：' + (err.message || err), false);
   } finally {
     state.loading = false;
-    loadingMore.hidden = true;
+    render();
   }
 }
 
@@ -421,49 +380,10 @@ function updateSubtitle() {
 }
 
 function render() {
-  const list = applyFilters();
   statCount.textContent = state.entries.length;
   updateSubtitle();
-  renderTagBar();
-
-  if (!state.feedList || !state.feedList.length) {
-    grid.innerHTML = '';
-    emptyBox.hidden = false;
-    emptyBox.querySelector('p').innerHTML = '还没有订阅源，点右上角「设置 → 数据源」添加 RSS 地址';
-    loadMoreBtn.hidden = true;
-    return;
-  }
-  // 有频道，但「卡片」开关一个都没开 —— 这时候不该报「没有找到匹配的资源」，误导
-  if (!state.feedFilter && !state.feedList.some((f) => f.cardEnabled)) {
-    grid.innerHTML = '';
-    emptyBox.hidden = false;
-    emptyBox.querySelector('p').innerHTML = '所有频道的「卡片」开关都关掉了。去「设置 → 数据源」打开，或切到「文章」页阅读';
-    loadMoreBtn.hidden = true;
-    return;
-  }
-  if (!list.length) {
-    grid.innerHTML = '';
-    emptyBox.hidden = false;
-    emptyBox.querySelector('p').textContent = state.q
-      ? '没有找到匹配的资源'
-      : (state.tag ? '该标签下暂无内容' : '所选频道暂无内容');
-    loadMoreBtn.hidden = true;
-    return;
-  }
-  emptyBox.hidden = true;
-  grid.innerHTML = list.map(state.view === 'list' ? rowHtml : cardHtml).join('');
-  bindCardActions(grid);
-
-  grid.querySelectorAll('.mini-tag').forEach((t) => {
-    t.addEventListener('click', () => {
-      const tag = t.getAttribute('data-tag');
-      state.tag = state.tag === tag ? null : tag;
-      render();
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    });
-  });
-
-  loadMoreBtn.hidden = !state.hasMore;
+  // 渲染交给 React 卡片视图（src/views/CardsView.jsx）：通知它读实时 state 重绘
+  window.dispatchEvent(new Event('__cardsTick'));
 }
 
 /* ---------------- 链接：标签 / 复制 / 打开原文 ---------------- */
@@ -627,135 +547,6 @@ function bindCardActions(root) {
   });
 }
 
-function cardHtml(e) {
-  const srcName = e.feedName ? shortFeedName(e.feedName) : '';
-  const hasImg = !!e.image;
-
-  const tags = e.tags.slice(0, 4)
-    .map((t) => `<span class="mini-tag" data-tag="${escapeHtml(t)}">#${escapeHtml(t)}</span>`)
-    .join('');
-
-  const desc = e.desc ? `<p class="card-desc">${escapeHtml(e.desc)}</p>` : '';
-
-  const copyBtn = copyBtnHtml(e);
-  const openBtn = openBtnHtml(e);
-
-  let media = '';
-  let metaRow = '';
-  if (hasImg) {
-    // 复制/打开按钮浮于图片右下角，腾出底部空间让图片框更高更大
-    media = `<div class="card-media">
-      <img loading="lazy" src="${escapeHtml(e.image)}" alt="${escapeHtml(e.name)}">
-      ${srcName ? `<span class="badge-source" title="${escapeHtml(e.feedName)}">${escapeHtml(srcName)}</span>` : ''}
-      ${e.size ? `<span class="badge-size">${escapeHtml(e.size)}</span>` : ''}
-      ${e.date ? `<span class="badge-idx">${fmtDate(e.date)}</span>` : ''}
-      <div class="card-media-actions">${copyBtn}${openBtn}</div>
-    </div>`;
-  } else {
-    metaRow = `<div class="card-meta">
-      ${srcName ? `<span class="src-pill" title="${escapeHtml(e.feedName)}">${escapeHtml(srcName)}</span>` : ''}
-      ${e.size ? `<span class="meta-size">${escapeHtml(e.size)}</span>` : ''}
-      <span class="meta-date">${fmtDate(e.date)}</span>
-    </div>`;
-  }
-
-  // 无图卡片没有图片浮层位，按钮仍落到底部操作条
-  const foot = hasImg ? '' : `<div class="card-foot">${copyBtn}${openBtn}</div>`;
-
-  return `
-    <article class="card" data-id="${escapeHtml(e.id)}">
-      ${media}
-      <div class="card-body">
-        ${metaRow}
-        <h3 class="card-title" title="${escapeHtml(e.name)}">${escapeHtml(e.name)}</h3>
-        ${desc}
-        <div class="card-tags">${tags}</div>
-        ${foot}
-      </div>
-    </article>`;
-}
-
-/** 列表视图的一行：缩略图 + 标题/描述/标签 + 操作，复用同一套 data-* 交互 */
-function rowHtml(e) {
-  const srcName = e.feedName ? shortFeedName(e.feedName) : '';
-  const tags = e.tags.slice(0, 4)
-    .map((t) => `<span class="mini-tag" data-tag="${escapeHtml(t)}">#${escapeHtml(t)}</span>`)
-    .join('');
-
-  const thumb = e.image
-    ? `<img loading="lazy" src="${escapeHtml(e.image)}" alt="${escapeHtml(e.name)}">`
-    : `<span class="row-thumb-fb">${icon('image')}</span>`;
-
-  const copyBtn = copyBtnHtml(e);
-  const openBtn = openBtnHtml(e);
-
-  const meta = [
-    srcName ? `<span class="src-pill" title="${escapeHtml(e.feedName)}">${escapeHtml(srcName)}</span>` : '',
-    tags,
-  ].join('');
-  const metaRow = meta.trim() ? `<div class="row-tags">${meta}</div>` : '';
-
-  return `
-    <article class="row-item" data-id="${escapeHtml(e.id)}">
-      <div class="row-thumb">${thumb}</div>
-      <div class="row-main">
-        <div class="row-head">
-          <h3 class="row-title" title="${escapeHtml(e.name)}">${escapeHtml(e.name)}</h3>
-          <span class="row-facts">
-            ${e.size ? `<span class="meta-size">${escapeHtml(e.size)}</span>` : ''}
-            <span class="row-date">${fmtDate(e.date)}</span>
-          </span>
-        </div>
-        ${e.desc ? `<p class="row-desc">${escapeHtml(e.desc)}</p>` : ''}
-        ${metaRow}
-      </div>
-      <div class="row-actions">
-        ${copyBtn}
-        ${openBtn}
-      </div>
-    </article>`;
-}
-
-function renderTagBar() {
-  const top = (state.tags || []).slice(0, 16);
-  if (!top.length) { tagBar.innerHTML = ''; return; }
-
-  tagBar.innerHTML =
-    `<span class="tag-chip ${state.tag ? '' : 'active'}" data-tag="">全部</span>` +
-    top.map(({ tag, n }) =>
-      `<span class="tag-chip ${state.tag === tag ? 'active' : ''}" data-tag="${escapeHtml(tag)}">${escapeHtml(tag)}<span class="cnt">${n}</span></span>`
-    ).join('');
-
-  tagBar.querySelectorAll('.tag-chip').forEach((chip) => {
-    chip.addEventListener('click', () => {
-      state.tag = chip.getAttribute('data-tag') || null;
-      render();
-    });
-  });
-}
-
-function renderSkeletons(n = 8) {
-  if (state.view === 'list') {
-    skeleton.innerHTML = Array.from({ length: n }).map(() => `
-      <div class="sk-row">
-        <div class="sk-row-thumb"></div>
-        <div class="sk-row-lines">
-          <div class="sk-row-line w70"></div>
-          <div class="sk-row-line w90"></div>
-          <div class="sk-row-line w40"></div>
-        </div>
-      </div>`).join('');
-    return;
-  }
-  skeleton.innerHTML = Array.from({ length: n }).map(() => `
-    <div class="sk-card">
-      <div class="sk-media"></div>
-      <div class="sk-line w85"></div>
-      <div class="sk-line"></div>
-      <div class="sk-line w60"></div>
-    </div>`).join('');
-}
-
 /* ============================================================
  * 设置面板
  * ============================================================ */
@@ -845,25 +636,9 @@ function setSettingsSummary(text) {
 /* ============================================================
  * 事件绑定
  * ============================================================ */
-let searchTimer = null;
-$('#searchInput').addEventListener('input', (ev) => {
-  clearTimeout(searchTimer);
-  const v = ev.target.value;
-  searchTimer = setTimeout(() => {
-    state.q = v;
-    state.tag = null;
-    loadPage(true);
-  }, 420);
-});
-
-$('#sortSelect').addEventListener('change', (ev) => { state.sort = ev.target.value; setLayout('sort', state.sort); render(); });
-$('#sizeSelect').addEventListener('change', (ev) => { state.size = ev.target.value; render(); });
-
-feedSelect.addEventListener('change', async (ev) => {
-  state.feedFilter = ev.target.value || null;
-  state.tag = null;
-  await loadPage(true);
-});
+// 卡片工具栏（搜索 / 频道 / 排序 / 体积）与视图模式已随卡片视图 React 化
+// （src/views/CardsView.jsx），交互经桥 cardsSearch / cardsFilterFeed / cardsSort /
+// cardsSize / cardsView 改共享 state 并重绘；旧 DOM 绑定移除。
 
 /* 刷新：先让服务端去抓一轮最新条目，再重新拉列表 */
 $('#refreshBtn').addEventListener('click', async () => {
@@ -893,10 +668,6 @@ $('#refreshBtn').addEventListener('click', async () => {
 
 $('#settingsBtn').addEventListener('click', () => openSettings());
 $('#themeBtn').addEventListener('click', cycleTheme);
-viewModeEl.addEventListener('click', (ev) => {
-  const b = ev.target.closest('.viewmode-btn');
-  if (b) setViewMode(b.getAttribute('data-mode'));
-});
 // 设置弹层的关闭按钮 / 遮罩点击 / tab 点击已随外壳 React 化由
 // src/settings/SettingsModal.jsx 内部处理，旧绑定移除
 
@@ -1093,7 +864,6 @@ document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && window.__settingsOpen) closeSettings();
 });
 
-loadMoreBtn.addEventListener('click', () => loadPage(false));
 
 let scrollLock = false;
 window.addEventListener('scroll', () => {
@@ -1971,11 +1741,17 @@ document.addEventListener('keydown', (ev) => {
   if (ev.key !== '/' || ev.metaKey || ev.ctrlKey || ev.altKey) return;
   const ae = document.activeElement;
   if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
-  const box = state.tab === 'reader' ? readerSearch : (state.tab === 'cards' ? $('#searchInput') : null);
-  if (!box) return;
+  if (state.tab === 'cards') {
+    // 卡片视图的搜索框已 React 化，聚焦经 window.__cardsFocusSearch 委托
+    if (!window.__cardsFocusSearch) return;
+    ev.preventDefault();
+    window.__cardsFocusSearch();
+    return;
+  }
+  if (state.tab !== 'reader') return;
   ev.preventDefault();
-  box.focus();
-  if (typeof box.select === 'function') box.select();
+  readerSearch.focus();
+  if (typeof readerSearch.select === 'function') readerSearch.select();
 });
 
 /* 阻止移动端密码管理器 / 浏览器自动填充劫持搜索框：
@@ -1990,7 +1766,6 @@ function defeatAutofill(el) {
   el.addEventListener('pointerdown', unlock);
   el.addEventListener('focus', unlock);
 }
-defeatAutofill($('#searchInput'));
 defeatAutofill(readerSearch);
 
 /* ============================================================
@@ -2382,7 +2157,6 @@ bindSections(document);
   if (urlFeed && (state.feedList || []).some((f) => String(f.id) === urlFeed && f.enabled)) {
     state.feedFilter = Number(urlFeed);
     state.rdFeedId = Number(urlFeed);
-    renderFeedSelect();
   }
 
   updateSubtitle();
@@ -2465,11 +2239,13 @@ function jumpToFeed(id) {
   scrollReaderTop();
 }
 function focusSearchBox() {
-  let box;
-  if (state.tab === 'reader') box = readerSearch;
-  else if (state.tab === 'cards') box = $('#searchInput');
-  else { switchView('reader'); box = readerSearch; }
-  if (box) { box.focus(); if (typeof box.select === 'function') box.select(); }
+  if (state.tab === 'cards') {
+    if (window.__cardsFocusSearch) window.__cardsFocusSearch();   // 卡片搜索框已 React 化
+    return;
+  }
+  if (state.tab !== 'reader') switchView('reader');
+  readerSearch.focus();
+  if (typeof readerSearch.select === 'function') readerSearch.select();
 }
 
 
@@ -2477,7 +2253,7 @@ function focusSearchBox() {
 let kbdIdx = -1;
 function kbdItems() {
   if (state.tab === 'reader') return Array.prototype.slice.call(readerList.querySelectorAll('.art-item'));
-  if (state.tab === 'cards') return Array.prototype.slice.call(grid.querySelectorAll(state.view === 'list' ? '.row-item' : '.card'));
+  if (state.tab === 'cards') return Array.prototype.slice.call(document.querySelectorAll(state.view === 'list' ? '#grid .row-item' : '#grid .card'));
   return [];
 }
 function clearKbdFocus() {
@@ -2528,19 +2304,13 @@ document.addEventListener('keydown', (ev) => {
 });
 // 列表重绘（翻页 / 筛选 / 点击）后清掉键盘焦点态，避免错位
 readerList.addEventListener('click', clearKbdFocus);
-grid.addEventListener('click', clearKbdFocus);
+// 卡片列表由 React 渲染，用事件委托清键盘焦点态（旧 grid 常量已移除）
+document.addEventListener('click', (ev) => { if (ev.target.closest && ev.target.closest('#grid')) clearKbdFocus(); });
 
 /* 卡片页条目收藏/已读：复用与阅读页相同的 /api/entries PATCH，但作用于卡片列表 state.entries */
 function isCardFav(id) {
   const e = (state.entries || []).find((x) => String(x.id) === String(id));
   return !!(e && e.isFavorite);
-}
-function paintCardFlag(id, e) {
-  const el = grid.querySelector('[data-id="' + CSS.escape(String(id)) + '"]');
-  if (!el) return;
-  el.classList.toggle('is-read', !!e.isRead);
-  el.classList.toggle('is-unread', !e.isRead);
-  el.classList.toggle('is-fav', !!e.isFavorite);
 }
 async function cardSetFlag(id, patch) {
   const list = state.entries || [];
@@ -2548,7 +2318,7 @@ async function cardSetFlag(id, patch) {
   if (!e) return false;
   const before = { isRead: !!e.isRead, isFavorite: !!e.isFavorite };
   Object.assign(e, patch);
-  paintCardFlag(id, e);
+  render();   // 卡片由 React 渲染：改共享 state 后 tick 重绘（旧 paintCardFlag 就地改 DOM 移除）
   try {
     const res = await apiFetch('/api/entries/' + encodeURIComponent(id), {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
@@ -2556,7 +2326,7 @@ async function cardSetFlag(id, patch) {
     if (!res.ok) throw new Error('HTTP ' + res.status);
     return true;
   } catch (err) {
-    Object.assign(e, before); paintCardFlag(id, e);
+    Object.assign(e, before); render();
     toast('标记失败：' + (err.message || err), false);
     return false;
   }
@@ -2571,7 +2341,7 @@ async function cardSetFlag(id, patch) {
  *   focusSearchBox / exportOpml / shortFeedName / feedTitle
  *   prefersReducedMotion / THEME_MODES / THEME_META
  *   refresh / scrollTop    常用操作的小包装
- *   loadFeeds / loadPage / renderFeedSelect / renderReaderChannels / scheduleAutoRefresh
+ *   loadFeeds / loadPage / renderReaderChannels / scheduleAutoRefresh
  *   setLayout / setSettingsSummary / bindSections / groupFeeds   P2c 数据源面板
  * 注意：必须在文件末尾建立，上游 const（THEME_MODES 等）此时已初始化。
  * 待视图与设置全部 React 化、旧 app.js 退役后，此桥一并拆除。
@@ -2589,7 +2359,7 @@ window.shiyue = {
   getSettingsSummary,
   getAppearance: readAppearance, setAppearance, resetAppearance,
   // —— v1.5.0 起数据源面板 React 化（P2c，组件见 src/settings/SourcePane.jsx） ——
-  loadFeeds, loadPage, renderFeedSelect, renderReaderChannels,
+  loadFeeds, loadPage, renderReaderChannels,
   scheduleAutoRefresh, setLayout, setSettingsSummary,
   bindSections, groupFeeds,
   // —— v1.6.0 起账号 / 状态面板 React 化（P2d，组件见 src/settings/AccountPane.jsx / StatusPane.jsx） ——
@@ -2598,4 +2368,15 @@ window.shiyue = {
   getAiPage: () => aiPage,
   setAiPage: (n) => { aiPage = (['digest', 'settings'].indexOf(n) >= 0) ? n : 'digest'; setLayout('aiPage', aiPage); },
   linkLabel,
+  // —— v1.8.0 起卡片视图 React 化（P3b，组件见 src/views/CardsView.jsx） ——
+  filterEntries: () => applyFilters(),
+  cardsSearch: (v) => { state.q = v; state.tag = null; return loadPage(true); },
+  cardsFilterFeed: (v) => { state.feedFilter = v ? v : null; state.tag = null; return loadPage(true); },
+  cardsSort: (v) => { state.sort = v; setLayout('sort', v); render(); },
+  cardsSize: (v) => { state.size = v; render(); },
+  cardsView: (m) => setViewMode(m),
+  cardsTag: (t) => { state.tag = t || null; render(); window.scrollTo({ top: 0, behavior: prefersReducedMotion() ? 'auto' : 'smooth' }); },
+  cardsLoadMore: () => loadPage(false),
+  cardsSetFlag: (id, patch) => cardSetFlag(id, patch),
+  copyText, openLinkMenu, fmtDate,
 };

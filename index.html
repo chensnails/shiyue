@@ -128,54 +128,8 @@
   </div>
 </header>
 
-<!-- 卡片：默认隐藏，由 switchView 决定显示哪个页面（默认是「文章」） -->
-<div id="cardsView" hidden>
-<div class="wrap toolbar">
-  <div class="search-box">
-    <svg class="search-ico" aria-hidden="true" focusable="false"><use href="#i-search"/></svg>
-    <input id="searchInput" name="q" type="search" placeholder="搜索资源名称、描述或标签…（服务端检索）" autocomplete="off">
-  </div>
-  <select id="feedSelect" class="select" title="频道筛选">
-    <option value="">全部频道</option>
-  </select>
-  <select id="sortSelect" class="select" title="排序">
-    <option value="new">最新发布</option>
-    <option value="old">最早上架</option>
-    <option value="name">名称排序</option>
-  </select>
-  <select id="sizeSelect" class="select" title="体积筛选">
-    <option value="all">全部体积</option>
-    <option value="small">≤ 1G</option>
-    <option value="mid">1G ~ 20G</option>
-    <option value="big">&gt; 20G</option>
-  </select>
-  <div class="viewmode" id="viewMode" role="group" aria-label="视图模式">
-    <button class="viewmode-btn active" type="button" data-mode="grid" title="卡片视图" aria-label="卡片视图"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-grid"/></svg></button>
-    <button class="viewmode-btn" type="button" data-mode="list" title="列表视图" aria-label="列表视图"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-list"/></svg></button>
-  </div>
-</div>
-
-<div class="wrap" id="tagBar"></div>
-
-<main class="wrap">
-  <div id="grid" class="grid"></div>
-  <div id="skeleton" class="grid" hidden></div>
-
-  <div id="empty" class="empty" hidden>
-    <div class="empty-ico"><svg class="ico" aria-hidden="true" focusable="false"><use href="#i-inbox"/></svg></div>
-    <p>没有找到匹配的资源</p>
-  </div>
-
-  <div class="loadmore-wrap">
-    <button class="btn btn-primary" id="loadMoreBtn" hidden>加载更多</button>
-    <div class="loading-dots" id="loadingMore" hidden><i></i><i></i><i></i></div>
-  </div>
-
-  <footer class="foot">
-    拾阅 · RSS 直连聚合 · 数据存于 PostgreSQL
-  </footer>
-</main>
-</div><!-- /cardsView -->
+<!-- 卡片：默认隐藏，由 switchView 决定显示哪个页面（默认是「文章」）。内容已 React 化，组件见 src/views/CardsView.jsx，挂载到下面的 #cardsRoot -->
+<div id="cardsView" hidden><div id="cardsRoot"></div></div>
 
 <!-- 文章：左频道 / 右文章，点标题展开全文 -->
 <div class="wrap reader" id="readerView">
