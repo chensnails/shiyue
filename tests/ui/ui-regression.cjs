@@ -20,6 +20,8 @@ const dom = new JSDOM('<!DOCTYPE html><html><body>' +
   '<div id="aiRoot"></div>' +
   '<div id="cardsRoot"></div>' +
   '<div id="readerRoot"></div>' +
+  '<header class="topbar" id="topbarRoot"></header>' +
+  '<div id="shellRoot"></div>' +
   '</body></html>', {
   url: 'http://localhost:3000/',
   pretendToBeVisual: true,
@@ -103,6 +105,13 @@ let accountPostOk = true;
 let statusFailNext = false;
 let promptInstallResult = false;
 const clipboardWrites = [];
+/* ---- App Shell（顶栏，P4a）测试可控状态 ---- */
+let shellSnap = {
+  stat: 12, subtitle: '拾取值得读的 · 采集 2/3 个频道', view: 'reader',
+  themeLabel: '跟随系统', themeIco: 'theme-auto',
+  installReady: false, statVisible: false,
+};
+let refreshDeferred = null;   // 非空时 refresh() 返回它（测忙态）
 // /api/status 快照（字段对齐 server.js 的实际返回）
 const statusPayload = () => ({
   app: {
@@ -455,6 +464,12 @@ w.shiyue = {
   exportOpml: noop('exportOpml'),
   // v1.6.0：账号面板「一键安装」桥（旧 app.js promptInstall）
   promptInstall: () => { calls.push(['promptInstall']); return Promise.resolve(promptInstallResult); },
+  // —— v1.10.0：App Shell 顶栏（P4a，组件见 src/shell/TopBar.jsx） ——
+  getShell: () => Object.assign({}, shellSnap),
+  switchView: (v) => { calls.push(['switchView', v]); shellSnap.view = v; shellSnap.statVisible = v === 'cards'; shellTick(); },
+  refresh: () => { calls.push(['refresh']); return refreshDeferred || Promise.resolve(); },
+  cycleTheme: () => calls.push(['cycleTheme']),
+  openSettings: (t) => { calls.push(['openSettings', t]); },
   // v1.7.0：AI 视图桥（P3a）
   getAiPage: () => w.shiyue.state.aiPage || 'digest',
   setAiPage: (n) => { calls.push(['setAiPage', n]); w.shiyue.state.aiPage = n; },
@@ -544,6 +559,7 @@ const layoutStub = { collapsedGroups: [], sections: {} };
 
 /* 卡片视图（P3b）：复刻 app.js 的 loadPage 语义（数据归共享 state，UI 靠 __cardsTick 重绘） */
 const cardsTick = () => w.dispatchEvent(new w.Event('__cardsTick'));
+const shellTick = () => w.dispatchEvent(new w.Event('__shellTick'));
 const readerTick = () => w.dispatchEvent(new w.Event('__readerTick'));
 
 /** 阅读页条目（P3c 测试用） */
@@ -583,10 +599,13 @@ require('./.build/mount-settings.cjs');
 require('./.build/mount-ai.cjs');
 require('./.build/mount-cards.cjs');
 require('./.build/mount-reader.cjs');
+require('./.build/mount-shell.cjs');
 const __mount = w.__mount;
 const __mountAi = w.__mountAi;
 const __mountCards = w.__mountCards;
 const __mountReader = w.__mountReader;
+const __mountTopBar = w.__mountTopBar;
+const __mountReadProgress = w.__mountReadProgress;
 __mount(document.getElementById('settingsRoot'));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -658,8 +677,8 @@ const withEFP = (el, fn) => {
   // 背景：v1.7.0 迁移 AI 视图时，替换区间跨过了 #settingsRoot，导致设置弹层不再挂载、
   // 设置按钮失效（直到 v1.8.2 才发现）。这里把四个挂载点钉死。
   const indexHtml = fs.readFileSync(path.join(__dirname, '..', '..', 'index.html'), 'utf8');
-  t('index.html：四个 React 挂载点齐全', () => {
-    for (const id of ['settingsRoot', 'cmdkRoot', 'aiRoot', 'cardsRoot']) {
+  t('index.html：React 挂载点齐全', () => {
+    for (const id of ['settingsRoot', 'cmdkRoot', 'aiRoot', 'cardsRoot', 'readerRoot', 'topbarRoot', 'shellRoot']) {
       if (indexHtml.indexOf('id="' + id + '"') < 0) throw new Error('缺 #' + id);
     }
   });
@@ -668,6 +687,15 @@ const withEFP = (el, fn) => {
     const modRefs = (indexHtml.match(/src="\/src\/main\.jsx"/g) || []).length;
     if (appRefs !== 1) throw new Error('/app.js 引用 ' + appRefs + ' 次');
     if (modRefs !== 1) throw new Error('/src/main.jsx 引用 ' + modRefs + ' 次');
+  });
+
+  // 阅读页外层 #readerRoot 必须 display:contents，否则 .reader 的两列网格会塌成 232px 单列
+  // （v1.9.0 曾因此导致「文章页侧栏 / 正文错位」线上问题）
+  t('style.css：.reader > #readerRoot 用 display:contents 还原网格', () => {
+    const css = fs.readFileSync(path.join(__dirname, '..', '..', 'public', 'style.css'), 'utf8');
+    const m = css.match(/\.reader\s*>\s*#readerRoot\s*\{([^}]*)\}/);
+    if (!m) throw new Error('缺 .reader > #readerRoot 规则');
+    if (m[1].indexOf('display: contents') < 0) throw new Error('应设 display:contents，实际：' + m[1].trim());
   });
 
   // ============ 外壳与宿主 ============
@@ -1936,6 +1964,103 @@ const withEFP = (el, fn) => {
   });
   w.shiyue.state.rdReadError = false;
 
+  // ============ App Shell 顶栏 / 进度条（P4a React 化） ============
+  __mountTopBar(document.getElementById('topbarRoot'));
+  __mountReadProgress(document.getElementById('shellRoot'));
+  await sleep(40);
+  const S = (sel) => document.querySelector(sel);
+  const navBtns = () => [...document.querySelectorAll('#viewNav .viewnav-btn')];
+
+  t('顶栏渲染：品牌 / 三个导航 / 统计 / 按钮', () => {
+    if (!S('#topbarRoot .topbar-inner')) throw new Error('无 .topbar-inner');
+    if (!S('#topbarRoot .brand-logo')) throw new Error('无 logo');
+    if (navBtns().length !== 3) throw new Error('导航按钮 ' + navBtns().length);
+    if (S('#statCount').textContent !== '12') throw new Error('statCount: ' + S('#statCount').textContent);
+    if (S('#subtitle').textContent !== '拾取值得读的 · 采集 2/3 个频道') throw new Error('subtitle: ' + S('#subtitle').textContent);
+    for (const id of ['refreshBtn', 'installBtn', 'themeBtn', 'settingsBtn']) if (!S('#' + id)) throw new Error('缺 #' + id);
+  });
+  t('导航高亮跟随 view（reader）', () => {
+    const a = navBtns().filter((b) => b.classList.contains('active')).map((b) => b.getAttribute('data-view'));
+    if (a.join() !== 'reader') throw new Error('active: ' + a.join());
+  });
+  t('reader 视图下「条资源」隐藏', () => { if (S('#stat').hidden !== true) throw new Error('应隐藏'); });
+
+  navBtns()[1].click();
+  await sleep(20);
+  t('点「卡片」→ switchView(cards)', () => {
+    if (!callsOf('switchView').some((c) => c[1] === 'cards')) throw new Error('未触发');
+  });
+  t('切卡片后：卡片高亮 + 条资源可见', () => {
+    if (!navBtns()[1].classList.contains('active')) throw new Error('卡片未高亮');
+    if (S('#stat').hidden) throw new Error('stat 应可见');
+  });
+
+  shellSnap.themeLabel = 'GitHub 暗黑';
+  shellSnap.themeIco = 'github';
+  shellTick();
+  await sleep(20);
+  t('主题按钮随快照更新（图标 / title）', () => {
+    const use = S('#themeIco use');
+    if (use.getAttribute('href') !== '#i-github') throw new Error('href: ' + use.getAttribute('href'));
+    if (S('#themeBtn').title.indexOf('GitHub 暗黑') < 0) throw new Error('title: ' + S('#themeBtn').title);
+  });
+  S('#themeBtn').click();
+  await sleep(10);
+  t('点主题 → cycleTheme', () => { if (!callsOf('cycleTheme').length) throw new Error('未触发'); });
+
+  S('#settingsBtn').click();
+  await sleep(10);
+  t('点设置 → openSettings', () => { if (!callsOf('openSettings').length) throw new Error('未触发'); });
+
+  t('安装按钮默认隐藏', () => { if (S('#installBtn').hidden !== true) throw new Error('应隐藏'); });
+  shellSnap.installReady = true;
+  shellTick();
+  await sleep(20);
+  t('installReady → 安装按钮可见', () => { if (S('#installBtn').hidden) throw new Error('应显示'); });
+  S('#installBtn').click();
+  await sleep(10);
+  t('点安装 → promptInstall', () => { if (!callsOf('promptInstall').length) throw new Error('未触发'); });
+
+  // 刷新忙态（refresh 返回挂起的 Promise）
+  let resolveRefresh;
+  refreshDeferred = new Promise((r) => { resolveRefresh = r; });
+  S('#refreshBtn').click();
+  await sleep(20);
+  t('刷新中：按钮禁用 + 图标自旋', () => {
+    if (!callsOf('refresh').length) throw new Error('未触发 refresh');
+    if (S('#refreshBtn').disabled !== true) throw new Error('按钮未禁用');
+    if (!S('#refreshBtn .ico').classList.contains('spin')) throw new Error('未自旋');
+  });
+  resolveRefresh();
+  refreshDeferred = null;
+  await sleep(30);
+  t('刷新完成：恢复可点', () => {
+    if (S('#refreshBtn').disabled) throw new Error('仍禁用');
+    if (S('#refreshBtn .ico').classList.contains('spin')) throw new Error('仍自旋');
+  });
+
+  t('进度条已渲染', () => {
+    const pr = S('#readProgress');
+    if (!pr) throw new Error('无 #readProgress');
+    if (!pr.classList.contains('read-progress')) throw new Error('class 不对');
+  });
+  {
+    const se = w.document.scrollingElement || w.document.documentElement;
+    let stubbed = true;
+    try {
+      Object.defineProperty(se, 'scrollHeight', { value: 1000, configurable: true });
+      Object.defineProperty(se, 'clientHeight', { value: 0, configurable: true });
+      Object.defineProperty(se, 'scrollTop', { value: 250, configurable: true });
+    } catch (_) { stubbed = false; }
+    w.dispatchEvent(new w.Event('scroll'));
+    await sleep(60);
+    t('进度条随滚动更新 scaleX', () => {
+      if (!stubbed) throw new Error('无法桩滚动指标');
+      const tr = S('#readProgress').style.transform;
+      if (!/scaleX\(0\.25\)/.test(tr)) throw new Error('transform: ' + tr);
+    });
+  }
+
   // ============ 冒烟：index.html + app.js 顶层加载无异常 ============
   // 背景：v1.9.0 迁移阅读页时桥里写了 `readerToggleArt`（函数名却是 toggleReaderArt），
   // app.js 顶层抛 ReferenceError → 整页 JS 中断、window.shiyue 未建立。这条冒烟专治此类。
@@ -1976,6 +2101,7 @@ const withEFP = (el, fn) => {
         'readerToggleArt', 'readerCollapseAll', 'readerReadAll', 'readerToggleFav', 'readerTagToCards',
         'readerToggleAccordion', 'readerAccordionOn', 'readerToggleDrawer', 'readerCloseDrawer', 'fmtFull',
         'cardsSearch', 'cardsView', 'filterEntries', 'getAiPage', 'promptInstall',
+        'getShell', 'refresh', 'cycleTheme', 'switchView',
       ];
       for (const k of need) if (typeof s2[k] !== 'function') throw new Error('缺桥函数 ' + k);
     });

@@ -93,40 +93,12 @@
   <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19.5 8.5a2 2 0 0 0-2.83-2.83L5 17v3Z"/><path d="M14.5 7.5l2 2"/></symbol>
 </svg>
 
-<header class="topbar">
-  <div class="wrap topbar-inner">
-    <div class="brand">
-      <svg class="brand-logo" viewBox="0 0 64 64" role="img" aria-label="拾阅"><rect width="64" height="64" rx="15" style="fill: var(--accent)"/><rect x="8" y="17" width="33" height="37" rx="6" fill="#ffffff"/><rect x="15" y="25" width="19" height="5" rx="2.5" style="fill: var(--accent)"/><rect x="15" y="35" width="12" height="5" rx="2.5" style="fill: var(--accent)"/><rect x="15" y="45" width="16" height="5" rx="2.5" style="fill: var(--accent)"/><path d="M51.5 6 l2.9 7.1 7.1 2.9 -7.1 2.9 -2.9 7.1 -2.9 -7.1 -7.1 -2.9 7.1 -2.9 z" fill="#ffffff"/></svg>
-      <div class="brand-text">
-        <h1>拾阅</h1>
-        <p id="subtitle">正在加载频道…</p>
-      </div>
-    </div>
-    <div class="topbar-actions">
-      <nav class="viewnav" id="viewNav">
-        <button class="viewnav-btn active" data-view="reader">文章</button>
-        <button class="viewnav-btn" data-view="cards">卡片</button>
-        <button class="viewnav-btn" data-view="ai">AI</button>
-      </nav>
-      <div class="stat" id="stat">
-        <span id="statCount">—</span>
-        <small>条资源</small>
-      </div>
-      <button class="btn btn-ghost" id="refreshBtn" title="重新拉取">
-        <svg class="ico" aria-hidden="true" focusable="false"><use href="#i-refresh"/></svg><span class="btn-label">刷新</span>
-      </button>
-      <button class="btn btn-ghost btn-icon install-trigger" id="installBtn" title="添加到手机" aria-label="添加到手机" hidden>
-        <svg class="ico" aria-hidden="true" focusable="false"><use href="#i-download"/></svg>
-      </button>
-      <button class="btn btn-ghost btn-icon" id="themeBtn" title="主题：跟随系统" aria-label="切换主题">
-        <svg class="ico" id="themeIco" aria-hidden="true" focusable="false"><use href="#i-theme-auto"/></svg>
-      </button>
-      <button class="btn btn-ghost" id="settingsBtn" title="设置">
-        <svg class="ico" aria-hidden="true" focusable="false"><use href="#i-settings"/></svg><span class="btn-label">设置</span>
-      </button>
-    </div>
-  </div>
-</header>
+<!-- 顶栏（App Shell）：品牌 / 视图导航 / 条资源 / 刷新 / 添加到手机 / 主题 / 设置。
+     P4a 起 React 化，组件见 src/shell/TopBar.jsx，挂载到下面的 #topbarRoot。
+     注意 #topbarRoot 就是 <header class="topbar"> 本身（sticky），组件只渲染其内部内容。 -->
+<header class="topbar" id="topbarRoot"></header>
+<!-- App Shell 附加层（顶部阅读进度条）：组件见 src/shell/TopBar.jsx（ReadProgress） -->
+<div id="shellRoot"></div>
 
 <!-- 卡片：默认隐藏，由 switchView 决定显示哪个页面（默认是「文章」）。内容已 React 化，组件见 src/views/CardsView.jsx，挂载到下面的 #cardsRoot -->
 <div id="cardsView" hidden><div id="cardsRoot"></div></div>
@@ -152,9 +124,6 @@
   <img class="lightbox-img" id="lightboxImg" src="" alt="">
   <p class="lightbox-hint">点击任意处关闭 · Esc 退出</p>
 </div>
-
-<!-- 顶部阅读进度条（滚动驱动，轻量高级感） -->
-<div class="read-progress" id="readProgress" aria-hidden="true"></div>
 
 <!-- 命令面板 ⌘K / Ctrl+K（现代化快捷键交互，参考 Linear / Vercel 命令面板）。
      已 React 化：组件见 src/cmdk/CommandPalette.jsx，由 main.jsx 挂载到下面的节点 -->

@@ -1735,6 +1735,10 @@ body.is-dragging-feeds .drag-handle { cursor: grabbing; }
   align-items: start;
   padding-top: 18px;
 }
+/* 阅读页 React 化（v1.9.0）后，视图内容外面套了一层 #readerRoot 挂载点。
+   用 display:contents 抹掉这层盒子，让 <aside.reader-side> 与 <section.reader-main>
+   重新成为 .reader 网格的直接子项 —— 否则整个视图会挤进 232px 的第一列（侧栏 / 正文错位）。 */
+.reader > #readerRoot { display: contents; }
 
 /* ---------- 左侧频道 ---------- */
 .reader-side {

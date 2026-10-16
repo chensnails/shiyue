@@ -7,6 +7,7 @@ const TARGETS = [
   ['mount-ai.jsx', '.build/mount-ai.cjs'],
   ['mount-cards.jsx', '.build/mount-cards.cjs'],
   ['mount-reader.jsx', '.build/mount-reader.cjs'],
+  ['mount-shell.jsx', '.build/mount-shell.cjs'],
 ];
 
 await Promise.all(TARGETS.map(([infile, outfile]) => build({

@@ -18,6 +18,20 @@
 
 ---
 
+## [1.10.0] — 2026-10-17
+
+新增：
+
+- **App Shell 顶栏 + 顶部阅读进度条 React 化**（React 渐进式迁移 P4 收尾的第一块，即「迁移残留胶水」）：顶栏（品牌 / 视图导航 / 条资源统计 / 刷新 / 添加到手机 / 主题 / 设置）与阅读进度条迁往 `src/shell/TopBar.jsx`，分别挂载到 `index.html` 的 `#topbarRoot`（即 `<header class="topbar">` 本身）与 `#shellRoot`；类名 / ID / 视觉与交互保持不变。**三大视图 → 设置弹层 → 顶栏外壳，React 化已覆盖全部可见页面层。**
+  - 数据经桥 `getShell()` 一次性快照读取；旧 app.js 需要刷新顶栏时派发 `window.__shellTick`，组件监听后重读快照重绘。交互回桥：`switchView` / `refresh` / `cycleTheme` / `openSettings` / `promptInstall`。
+  - 顶栏「刷新」按钮的忙态（禁用 + 图标自旋）改由组件本地维护；原 app.js 中的刷新逻辑抽为 `refreshFeeds()` 并经桥 `refresh` 暴露。
+  - 「顶栏高度 → CSS 变量 `--topbar-h`」（阅读页头部窄屏吸顶依赖）由组件用 `ResizeObserver` 实测维护；阅读进度条的滚动驱动（rAF 节流）亦下沉组件。
+- 旧 app.js 清理：移除 `statCount` / `subtitle` DOM 常量与直接写入、`#viewNav` / `#refreshBtn` / `#settingsBtn` / `#themeBtn` 事件绑定、`syncViewNav`（改为 `emitShell` 派发事件）、`syncTopbarHeight`、`updateProgress` 及未再使用的 `$$` 选择器。
+
+修复：
+
+- **文章页布局错位**（v1.9.0 引入的回归）：阅读页 React 化后，视图内容外面多了一层 `#readerRoot` 挂载点，而 `.reader` 是 `grid-template-columns: 232px minmax(0,1fr)` 的两列网格 —— 侧栏与正文被整体塞进 232px 的第一列，页面看起来「不见了 / 位置错误」。修复：新增 `.reader > #readerRoot { display: contents; }`，抹掉这层盒子、还原两列网格（并加 UI 回归断言钉死该规则）。
+
 ## [1.9.0] — 2026-10-17
 
 新增：

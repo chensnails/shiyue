@@ -83,16 +83,9 @@ let layoutPref = sanitizeLayoutLocal(window.__LAYOUT__);
 // 排序方式与默认阅读范围：从账号偏好取初值（服务端未注入时回落默认）
 state.sort = layoutPref.sort;
 state.rdScope = layoutPref.rdScope;
-// 排序下拉回填账号偏好值（否则数据按 name 排但下拉显示「最新」）
-const _sortSel = document.getElementById('sortSelect');
-if (_sortSel) _sortSel.value = state.sort;
-
 /* ---------------- DOM ---------------- */
 const $ = (s) => document.querySelector(s);
-const $$ = (s) => document.querySelectorAll(s);
 const toastEl = $('#toast');
-const statCount = $('#statCount');
-const subtitle = $('#subtitle');
 /* ---------------- 工具 ---------------- */
 /** 带登录态处理的 fetch：401 时跳登录页 */
 async function apiFetch(url, opts) {
@@ -354,18 +347,22 @@ function applyFilters() {
 }
 
 /* ---------------- 渲染 ---------------- */
-function updateSubtitle() {
+/** 顶栏副标题文本（纯计算；App Shell 的 TopBar 经桥 getShell 读取） */
+function subtitleText() {
   const meta = state.feedMeta;
-  if (!meta) { subtitle.textContent = '正在加载频道…'; return; }
-  if (!meta.total) { subtitle.textContent = '还没有订阅源 · 点右上角「设置 → 数据源」添加 RSS'; return; }
-  subtitle.textContent = `${state.tagline} · 采集 ${meta.enabled}/${meta.total} 个频道`
+  if (!meta) return '正在加载频道…';
+  if (!meta.total) return '还没有订阅源 · 点右上角「设置 → 数据源」添加 RSS';
+  return `${state.tagline} · 采集 ${meta.enabled}/${meta.total} 个频道`
     + (Number(meta.cardEnabled) !== Number(meta.enabled) ? ` · 卡片展示 ${meta.cardEnabled} 个` : '');
 }
 
+/** 通知 App Shell（顶栏，src/shell/TopBar.jsx）重绘：它监听 __shellTick 后重读 getShell() */
+function emitShell() { window.dispatchEvent(new Event('__shellTick')); }
+
 function render() {
-  statCount.textContent = state.entries.length;
-  updateSubtitle();
-  // 渲染交给 React 卡片视图（src/views/CardsView.jsx）：通知它读实时 state 重绘
+  // 顶栏（条资源计数 / 副标题）由 React 渲染
+  emitShell();
+  // 卡片列表渲染交给 React 卡片视图（src/views/CardsView.jsx）：通知它读实时 state 重绘
   window.dispatchEvent(new Event('__cardsTick'));
 }
 
@@ -531,12 +528,10 @@ function setSettingsSummary(text) {
 // （src/views/CardsView.jsx），交互经桥 cardsSearch / cardsFilterFeed / cardsSort /
 // cardsSize / cardsView 改共享 state 并重绘；旧 DOM 绑定移除。
 
-/* 刷新：先让服务端去抓一轮最新条目，再重新拉列表 */
-$('#refreshBtn').addEventListener('click', async () => {
-  const btn = $('#refreshBtn');
-  const ico = btn.querySelector('.ico');
-  btn.disabled = true;
-  ico.classList.add('spin');
+/* 刷新：先让服务端去抓一轮最新条目，再重新拉列表。
+   顶栏「刷新」按钮已 React 化（src/shell/TopBar.jsx），经桥 switchView / refresh 调用。
+   按钮的忙态（disabled + 图标自旋）由组件本地维护，这里只负责数据。 */
+async function refreshFeeds() {
   hideNewPill();   // 手动刷新了，自动刷新挂的那个「有新内容」提示就作废了
   try {
     const r = await apiFetch('/api/feeds/refresh', { method: 'POST' });
@@ -551,16 +546,12 @@ $('#refreshBtn').addEventListener('click', async () => {
     else toast(data.added ? `已刷新，新增 ${data.added} 条` : '已刷新，没有新内容');
   } catch (err) {
     toast('刷新失败：' + (err.message || err), false);
-  } finally {
-    btn.disabled = false;
-    ico.classList.remove('spin');
   }
-});
+}
 
-$('#settingsBtn').addEventListener('click', () => openSettings());
-$('#themeBtn').addEventListener('click', cycleTheme);
-// 设置弹层的关闭按钮 / 遮罩点击 / tab 点击已随外壳 React 化由
-// src/settings/SettingsModal.jsx 内部处理，旧绑定移除
+// 顶栏（设置 / 主题 / 刷新 / 视图导航）已随 App Shell React 化，
+// 交互经桥 openSettings / cycleTheme / refresh / switchView；旧 DOM 绑定移除。
+// 设置弹层的关闭按钮 / 遮罩点击 / tab 点击由 src/settings/SettingsModal.jsx 内部处理。
 
 /* OPML 导出：把当前账号的订阅源整理成标准 OPML（分组作为文件夹），浏览器下载 */
 function exportOpml() {
@@ -606,12 +597,6 @@ function exportOpml() {
 /* ============================================================
  * 日报 / 模型 / 日报设置 事件绑定
  * ============================================================ */
-$('#viewNav').addEventListener('click', (ev) => {
-  const b = ev.target.closest('.viewnav-btn');
-  // 「收藏」不再是顶栏入口，只作为文章页侧栏里的一个范围（state.rdScope）
-  if (b) switchView(b.getAttribute('data-view'));
-});
-
 /* ============================================================
  * 网页自动刷新
  * 间隔存在服务端（settings.source.autoRefreshMinutes），各设备一致。
@@ -698,7 +683,7 @@ function applyFresh({ view, data }) {
     state.tags = data.tags || state.tags;
     render();
   }
-  updateSubtitle();
+  emitShell();
   hideNewPill();
 }
 
@@ -780,9 +765,8 @@ function switchView(name) {
     $('#readerView').hidden = name !== 'reader';
     $('#cardsView').hidden = name !== 'cards';
     $('#aiView').hidden = name !== 'ai';
-    // 顶栏「条资源」只对卡片页有意义
-    $('#stat').hidden = name !== 'cards';
-    syncViewNav();
+    // 顶栏（视图高亮 + 「条资源」仅卡片页可见）由 React 重绘
+    emitShell();
 
     if (name === 'reader') {
       renderReaderChannels();
@@ -794,7 +778,6 @@ function switchView(name) {
     window.dispatchEvent(new CustomEvent('__viewChanged', { detail: name }));
 
     window.scrollTo({ top: 0 });
-    if (typeof updateProgress === 'function') updateProgress();
   };
   // View Transitions API：视图切换时整页交叉淡入（渐进增强，减少动态效果时跳过）
   if (document.startViewTransition && !prefersReducedMotion()) {
@@ -802,13 +785,6 @@ function switchView(name) {
   } else {
     apply();
   }
-}
-
-/** 顶栏高亮：只反映当前页面（「收藏」已不再是顶栏入口） */
-function syncViewNav() {
-  $$('#viewNav .viewnav-btn').forEach((b) => {
-    b.classList.toggle('active', b.getAttribute('data-view') === state.tab);
-  });
 }
 
 /* ============================================================
@@ -1019,7 +995,7 @@ function readerSetScope(scope) {
   state.rdGroup = null;
   renderReader();
   loadReader({ reset: true });
-  syncViewNav();
+  emitShell();
   setReaderDrawer(false);
   scrollReaderTop();
 }
@@ -1029,7 +1005,7 @@ function readerSetGroup(g) {
   else { state.rdGroup = g; state.rdFeedId = null; }
   renderReader();
   loadReader({ reset: true });
-  syncViewNav();
+  emitShell();
   setReaderDrawer(false);
   scrollReaderTop();
 }
@@ -1041,7 +1017,7 @@ function readerSetFeed(id) {
   state.rdGroup = null;
   renderReader();
   loadReader({ reset: true });
-  syncViewNav();
+  emitShell();
   setReaderDrawer(false);
   scrollReaderTop();
 }
@@ -1347,18 +1323,9 @@ function applyTheme(mode, animate) {
   }
 
   const meta = THEME_META[m];
-  const ico = document.getElementById('themeIco');
-  if (ico) {
-    const use = ico.querySelector('use');
-    if (use) use.setAttribute('href', '#i-' + meta.ico);
-  }
-  const btn = document.getElementById('themeBtn');
-  if (btn) {
-    btn.title = '主题：' + meta.label + '（点击切换）';
-    btn.setAttribute('aria-label', '主题：' + meta.label);
-  }
   const tc = document.querySelector('meta[name="theme-color"]');
   if (tc) tc.setAttribute('content', meta.color || (dark ? '#242424' : '#ffffff'));
+  emitShell();   // 顶栏主题按钮的图标与提示由 React 重绘
 
   // 外观页的主题分段控件已 React 化：选中态由窗口级 __appearanceChanged 事件回流，
   // 不再在这里直接操作 DOM
@@ -1542,28 +1509,28 @@ if ('serviceWorker' in navigator) {
 }
 
 // 安装到手机：Chromium 系（Edge / Chrome）满足条件时会触发 beforeinstallprompt
-const installBtn = $('#installBtn');
-let deferredInstall = null;
+let deferredInstall = null;   // 捕获到的 beforeinstallprompt 事件（顶栏安装按钮经桥 promptInstall 触发）
 
 window.addEventListener('beforeinstallprompt', (ev) => {
   ev.preventDefault();
   deferredInstall = ev;
-  if (installBtn) installBtn.hidden = false;
+  emitShell();   // 顶栏「添加到手机」按钮由 React 按 installReady 显隐
 });
 
 window.addEventListener('appinstalled', () => {
   deferredInstall = null;
-  if (installBtn) installBtn.hidden = true;
+  emitShell();
   toast('已添加到手机');
 });
 
+/** 触发安装（返回是否真的弹了；顶栏按钮与账号面板「一键安装」共用） */
 async function promptInstall() {
   if (!deferredInstall) return false;
   deferredInstall.prompt();
   let outcome = 'dismissed';
   try { ({ outcome } = await deferredInstall.userChoice); } catch (_) { /* 忽略 */ }
   deferredInstall = null;
-  if (installBtn) installBtn.hidden = true;
+  emitShell();
   if (outcome === 'accepted') toast('已添加到手机');
   return true;
 }
@@ -1579,23 +1546,6 @@ syncThemeColor();
 new MutationObserver(syncThemeColor).observe(document.documentElement, {
   attributes: true, attributeFilter: ['data-theme'],
 });
-
-/* ============================================================
- * 顶栏高度 → CSS 变量 --topbar-h
- * 阅读页头部在窄屏下要吸在顶栏下面，得知道顶栏到底多高。
- * 高度会随屏宽、程序名显隐、刘海屏安全区变化，所以实测后写进变量，别在 CSS 里写死。
- * ResizeObserver 顺带覆盖字体加载完成、横竖屏切换这些时机。
- * ============================================================ */
-const topbarEl = document.querySelector('.topbar');
-function syncTopbarHeight() {
-  if (topbarEl) {
-    document.documentElement.style.setProperty('--topbar-h', topbarEl.offsetHeight + 'px');
-  }
-}
-syncTopbarHeight();
-window.addEventListener('resize', syncTopbarHeight);
-window.addEventListener('orientationchange', syncTopbarHeight);
-if (window.ResizeObserver && topbarEl) new ResizeObserver(syncTopbarHeight).observe(topbarEl);
 
 /* ============================================================
  * 可折叠分组（<details class="sec" data-sec="…">）
@@ -1662,7 +1612,7 @@ bindSections(document);
     state.rdFeedId = Number(urlFeed);
   }
 
-  updateSubtitle();
+  emitShell();
   await loadPage(true);
 
   // 打开哪个页面：hash 优先（可分享深链），其次上次记住的，默认「文章」
@@ -1695,24 +1645,8 @@ function prefersReducedMotion() {
   return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 }
 
-/* ---------- 1) 阅读进度条 ---------- */
-function updateProgress() {
-  const bar = document.getElementById('readProgress');
-  if (!bar) return;
-  const el = document.scrollingElement || document.documentElement;
-  const max = el.scrollHeight - el.clientHeight;
-  const p = max > 8 ? Math.min(1, Math.max(0, el.scrollTop / max)) : 0;
-  bar.style.transform = 'scaleX(' + p + ')';
-}
-let _progRAF = 0;
-window.addEventListener('scroll', () => {
-  if (_progRAF) return;
-  _progRAF = requestAnimationFrame(() => { _progRAF = 0; updateProgress(); });
-}, { passive: true });
-window.addEventListener('resize', updateProgress);
-window.addEventListener('load', updateProgress);
-
-/* ---------- 2) 命令面板（已迁移为 React 组件） ----------
+/* ---------- 1) 阅读进度条 / 2) 命令面板（均已迁移为 React 组件） ----------
+   进度条见 src/shell/TopBar.jsx 的 ReadProgress；
    实现在 src/cmdk/CommandPalette.jsx，由 <script type="module" src="/src/main.jsx">
    挂载到 index.html 的 #cmdkRoot；旧 DOM（#cmdkMask 等）与 PINYIN 表已一并移除。
    下面的 selectScope / jumpToFeed / focusSearchBox 是普通页面函数，
@@ -1726,7 +1660,7 @@ function selectScope(scope) {
   state.rdGroup = null;
   renderReaderChannels();
   loadReader({ reset: true });
-  syncViewNav();
+  emitShell();
   setReaderDrawer(false);
   scrollReaderTop();
 }
@@ -1737,7 +1671,7 @@ function jumpToFeed(id) {
   state.rdGroup = null;
   renderReaderChannels();
   loadReader({ reset: true });
-  syncViewNav();
+  emitShell();
   setReaderDrawer(false);
   scrollReaderTop();
 }
@@ -1835,6 +1769,21 @@ async function cardSetFlag(id, patch) {
   }
 }
 
+/** App Shell（顶栏）一次性快照：React 的 TopBar 经桥 getShell() 读取 */
+function shellSnapshot() {
+  const mode = THEME_MODES.indexOf(currentThemeMode()) >= 0 ? currentThemeMode() : 'auto';
+  const meta = THEME_META[mode];
+  return {
+    stat: state.entries.length,
+    subtitle: subtitleText(),
+    view: state.tab,
+    themeLabel: meta.label,
+    themeIco: meta.ico,
+    installReady: !!deferredInstall,
+    statVisible: state.tab === 'cards',
+  };
+}
+
 /* ============================================================
  * window.shiyue 桥（混合期临时方案）
  * ------------------------------------------------------------
@@ -1854,7 +1803,8 @@ window.shiyue = {
   switchView, applyTheme, openSettings, selectScope, jumpToFeed,
   focusSearchBox, exportOpml, shortFeedName, feedTitle, prefersReducedMotion,
   THEME_MODES, THEME_META,
-  refresh: () => { const b = $('#refreshBtn'); if (b) b.click(); },
+  refresh: refreshFeeds,
+  cycleTheme,
   scrollTop: () => window.scrollTo({ top: 0, behavior: prefersReducedMotion() ? 'auto' : 'smooth' }),
   // —— v1.3.0 起 React 化组件的桥接面（设置弹层 / 外观 / 关于） ——
   apiFetch, isAdmin, toast,
@@ -1882,6 +1832,8 @@ window.shiyue = {
   cardsLoadMore: () => loadPage(false),
   cardsSetFlag: (id, patch) => cardSetFlag(id, patch),
   copyText, openLinkMenu, fmtDate,
+  // —— v1.10.0 起 App Shell 顶栏 React 化（P4a，组件见 src/shell/TopBar.jsx） ——
+  getShell: shellSnapshot,
   // —— v1.9.0 起文章视图 React 化（P3c，组件见 src/views/ReaderView.jsx） ——
   fmtFull,
   readerSetScope, readerSetFeed, readerSetGroup, readerOpenSource,
