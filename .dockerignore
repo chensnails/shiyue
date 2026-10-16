@@ -7,6 +7,10 @@
 node_modules
 npm-debug.log*
 
+# Vite 构建产物：镜像内多阶段构建重新产出，不拷本地 dist（避免陈旧产物）
+dist
+.vite
+
 # 旧版的落盘配置/摘要（v2 起数据全部存 PostgreSQL）
 data
 

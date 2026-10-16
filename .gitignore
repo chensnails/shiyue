@@ -1,6 +1,10 @@
 # 依赖
 node_modules/
 
+# Vite 构建产物（镜像内构建，不入库）
+dist/
+.vite/
+
 # 环境变量（含数据库密码、模型 Key 等密钥，绝不入库）
 .env
 .env.local

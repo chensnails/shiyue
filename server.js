@@ -20,7 +20,11 @@ const pkg = require('./package.json');
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = '0.0.0.0';
-const PUBLIC_DIR = path.join(__dirname, 'public');
+// 静态根目录：dist 是 Vite 构建产物（前端入口 / React 源码构建结果）；
+// 本地未构建时回退 public/，保证 fresh clone 直接 node server.js 也能跑。
+const PUBLIC_DIR = fs.existsSync(path.join(__dirname, 'dist'))
+  ? path.join(__dirname, 'dist')
+  : path.join(__dirname, 'public');
 
 const DATABASE_URL = process.env.DATABASE_URL
   || `postgres://${process.env.PG_USER || 'shiyue'}:${process.env.PG_PASSWORD || 'shiyue'}`

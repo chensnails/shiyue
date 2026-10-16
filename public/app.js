@@ -4234,19 +4234,11 @@ window.addEventListener('scroll', () => {
 window.addEventListener('resize', updateProgress);
 window.addEventListener('load', updateProgress);
 
-/* ---------- 2) 命令面板 ---------- */
-const cmdkMask = document.getElementById('cmdkMask');
-const cmdkInput = document.getElementById('cmdkInput');
-const cmdkList = document.getElementById('cmdkList');
-const cmdkKbd = document.getElementById('cmdkKbd');
-let cmdkOpen = false;
-let cmdkItems = [];
-let cmdkActive = 0;
-
-if (cmdkKbd) {
-  const isMac = /mac|iphone|ipad|ipod/i.test(navigator.platform || navigator.userAgent || '');
-  cmdkKbd.textContent = isMac ? '⌘K' : 'Ctrl K';
-}
+/* ---------- 2) 命令面板（已迁移为 React 组件） ----------
+   实现在 src/cmdk/CommandPalette.jsx，由 <script type="module" src="/src/main.jsx">
+   挂载到 index.html 的 #cmdkRoot；旧 DOM（#cmdkMask 等）与 PINYIN 表已一并移除。
+   下面的 selectScope / jumpToFeed / focusSearchBox 是普通页面函数，
+   通过文件末尾的 window.shiyue 桥供 React 组件调用。 */
 
 function selectScope(scope) {
   if (state.tab !== 'reader') switchView('reader');
@@ -4279,180 +4271,6 @@ function focusSearchBox() {
   if (box) { box.focus(); if (typeof box.select === 'function') box.select(); }
 }
 
-/* 轻量中文拼音表（全拼，无声调），用于命令面板按拼音过滤。
- * 仅覆盖常用字，未知汉字静默跳过（直接输入汉字仍可匹配），不影响其它搜索。 */
-const PINYIN = {
-  切:'qie',换:'huan',到:'dao',文:'wen',章:'zhang',页:'ye',卡:'ka',片:'pian',主:'zhu',题:'ti',
-  外:'wai',观:'guan',数:'shu',据:'ju',源:'yuan',模:'mo',型:'xing',账:'zhang',号:'hao',状:'zhuang',
-  态:'tai',设:'she',置:'zhi',阅:'yue',读:'du',范:'fan',围:'wei',全:'quan',部:'bu',未:'wei',
-  收:'shou',藏:'cang',重:'chong',新:'xin',拉:'la',取:'qu',聚:'ju',焦:'jiao',索:'suo',回:'hui',
-  顶:'ding',转:'zhuan',已:'yi',打:'da',开:'kai',暗:'an',色:'se',浅:'qian',亮:'liang',深:'shen',
-  自:'zi',动:'dong',网:'wang',盘:'pan',云:'yun',链:'lian',接:'jie',件:'jian',资:'zi',讯:'xun',
-  博:'bo',客:'ke',公:'gong',众:'zhong',微:'wei',信:'xin',科:'ke',技:'ji',财:'cai',经:'jing',
-  股:'gu',票:'piao',基:'ji',金:'jin',影:'ying',视:'shi',音:'yin',乐:'yue',游:'you',戏:'xi',
-  体:'ti',育:'yu',报:'bao',社:'she',区:'qu',团:'tuan',队:'dui',软:'ruan',计:'ji',美:'mei',
-  食:'shi',旅:'lv',健:'jian',康:'kang',医:'yi',教:'jiao',育:'yu',书:'shu',店:'dian',购:'gou',
-  物:'wu',房:'fang',车:'che',法:'fa',律:'lv',政:'zheng',治:'zhi',军:'jun',事:'shi',闻:'wen',
-  中:'zhong',华:'hua',周:'zhou',刊:'kan',杂:'za',志:'zhi',界:'jie',首:'shou',次:'ci',最:'zui',
-  精:'jing',选:'xuan',推:'tui',荐:'jian',创:'chuang',业:'ye',投:'tou',产:'chan',保:'bao',险:'xian',
-  银:'yin',行:'hang',汽:'qi',码:'ma',手:'shou',机:'ji',电:'dian',脑:'nao',户:'hu',国:'guo',
-  际:'ji',城:'cheng',市:'shi',乡:'xiang',村:'cun',山:'shan',河:'he',海:'hai',湖:'hu',花:'hua',
-  鸟:'niao',鱼:'yu',猫:'mao',狗:'gou',宠:'chong',小:'xiao',说:'shuo',漫:'man',画:'hua',摄:'she',
-  时:'shi',尚:'shang',潮:'chao',流:'liu',工:'gong',作:'zuo',职:'zhi',场:'chang',
-  导:'dao',出:'chu',看:'kan',搜:'sou',查:'cha',找:'zhao',更:'geng',多:'duo',少:'shao',
-  快:'kuai',帮:'bang',助:'zhu',关:'guan',用:'yong',登:'deng',录:'lu',退:'tui'
-};
-function cjkPinyin(text) {
-  const s = String(text || '');
-  let full = '', init = '';
-  for (const ch of s) {
-    const code = ch.codePointAt(0);
-    if (code < 0x4e00 || code > 0x9fff) continue; // 跳过非汉字（英文/数字已在 keywords 中）
-    const py = PINYIN[ch];
-    if (!py) continue; // 未知汉字静默跳过，降级为「直接输汉字」仍可匹配
-    full += py;
-    init += py[0];
-  }
-  return (full + ' ' + init).trim();
-}
-
-function buildCommands() {
-  const cmds = [];
-  [['reader', '文章'], ['cards', '卡片'], ['ai', 'AI']].forEach((v) => {
-    cmds.push({
-      group: '视图', icon: v[0] === 'reader' ? 'inbox' : (v[0] === 'cards' ? 'grid' : 'sparkle'),
-      label: '切换到' + v[1] + '页', hint: v[1], keywords: 'view ' + v[1] + ' 页面切换',
-      run: () => switchView(v[0]),
-    });
-  });
-  (typeof THEME_MODES !== 'undefined' ? THEME_MODES : ['auto', 'light', 'dark', 'github']).forEach((m) => {
-    const meta = (typeof THEME_META !== 'undefined' && THEME_META[m]) ? THEME_META[m] : { label: m };
-    cmds.push({
-      group: '主题', icon: 'theme-auto', label: '主题：' + meta.label, hint: meta.label,
-      keywords: 'theme dark light 暗色 浅色 外观', run: () => applyTheme(m, true),
-    });
-  });
-  [['source', '数据源'], ['model', '模型'], ['account', '账号'], ['appearance', '外观'], ['status', '状态']].forEach((t) => {
-    cmds.push({
-      group: '设置', icon: 'settings', label: '打开设置 · ' + t[1], hint: t[1], keywords: 'settings ' + t[1],
-      run: () => openSettings(t[0]),
-    });
-  });
-  [['all', '全部文章'], ['unread', '未读'], ['favorite', '收藏']].forEach((s) => {
-    cmds.push({
-      group: '阅读范围', icon: s[0] === 'favorite' ? 'star' : (s[0] === 'unread' ? 'dot' : 'circle'),
-      label: '阅读范围：' + s[1], hint: s[1], keywords: 'scope ' + s[1] + ' 未读 收藏',
-      run: () => selectScope(s[0]),
-    });
-  });
-  cmds.push({ group: '操作', icon: 'refresh', label: '重新拉取', hint: '刷新', keywords: 'refresh 刷新 同步', run: () => { const b = $('#refreshBtn'); if (b) b.click(); } });
-  cmds.push({ group: '操作', icon: 'search', label: '聚焦搜索', hint: '/', keywords: 'search 搜索 查找', run: focusSearchBox });
-  cmds.push({ group: '操作', icon: 'arrow-up', label: '回到顶部', hint: 'Top', keywords: 'top 顶部', run: () => window.scrollTo({ top: 0, behavior: prefersReducedMotion() ? 'auto' : 'smooth' }) });
-  cmds.push({ group: '操作', icon: 'download', label: '导出 OPML', hint: '备份', keywords: 'opml export 导出 备份 订阅源 频道', run: exportOpml });
-  (state.feedList || []).forEach((f) => {
-    cmds.push({
-      group: '跳转到频道', icon: 'circle', label: shortFeedName(feedTitle(f)), hint: '频道',
-      keywords: 'feed channel ' + (f.title || '') + ' ' + (f.groupName || ''), run: () => jumpToFeed(f.id),
-    });
-  });
-  // 预计算每个命令的拼音（全拼 + 首字母），供命令面板按拼音过滤
-  cmds.forEach((c) => { c.py = cjkPinyin((c.label || '') + ' ' + (c.keywords || '') + ' ' + (c.hint || '')); });
-  return cmds;
-}
-
-function cmdkFilter(q) {
-  q = (q || '').trim().toLowerCase();
-  const all = buildCommands();
-  if (!q) return all;
-  return all.filter((c) => {
-    const hay = (c.label + ' ' + (c.keywords || '') + ' ' + (c.hint || '') + ' ' + (c.py || '')).toLowerCase();
-    if (hay.indexOf(q) >= 0) return true;
-    let i = 0;
-    for (let k = 0; k < q.length; k++) {
-      i = hay.indexOf(q[k], i);
-      if (i < 0) return false;
-      i++;
-    }
-    return true;
-  });
-}
-
-function renderCmdk(q) {
-  cmdkItems = cmdkFilter(q);
-  cmdkActive = 0;
-  if (!cmdkItems.length) { cmdkList.innerHTML = '<div class="cmdk-empty">没有匹配的命令</div>'; return; }
-  let html = '';
-  let lastGroup = null;
-  cmdkItems.forEach((c, idx) => {
-    if (c.group !== lastGroup) { html += '<div class="cmdk-group-label">' + escapeHtml(c.group) + '</div>'; lastGroup = c.group; }
-    html += '<button class="cmdk-item' + (idx === 0 ? ' active' : '') + '" type="button" role="option" data-idx="' + idx + '" aria-selected="' + (idx === 0 ? 'true' : 'false') + '">'
-      + '<svg class="cmdk-ico" aria-hidden="true" focusable="false"><use href="#i-' + c.icon + '"/></svg>'
-      + '<span class="cmdk-label">' + escapeHtml(c.label) + '</span>'
-      + (c.hint ? '<span class="cmdk-tag">' + escapeHtml(c.hint) + '</span>' : '')
-      + '</button>';
-  });
-  cmdkList.innerHTML = html;
-}
-
-function cmdkSetActive(idx) {
-  const items = cmdkList.querySelectorAll('.cmdk-item');
-  if (!items.length) return;
-  cmdkActive = (idx + items.length) % items.length;
-  items.forEach((el, i) => {
-    const on = i === cmdkActive;
-    el.classList.toggle('active', on);
-    el.setAttribute('aria-selected', on ? 'true' : 'false');
-    if (on) el.scrollIntoView({ block: 'nearest' });
-  });
-}
-
-function openCmdk() {
-  if (cmdkOpen || !cmdkMask) return;
-  cmdkOpen = true;
-  cmdkMask.hidden = false;
-  cmdkInput.value = '';
-  renderCmdk('');
-  cmdkInput.focus();
-}
-function closeCmdk() {
-  if (!cmdkOpen) return;
-  cmdkOpen = false;
-  cmdkMask.hidden = true;
-  cmdkInput.blur();
-}
-function runCmdk(idx) {
-  const c = cmdkItems[idx];
-  if (!c) return;
-  closeCmdk();
-  try { c.run(); } catch (err) { console.error(err); }
-}
-
-if (cmdkInput) {
-  cmdkInput.addEventListener('input', () => renderCmdk(cmdkInput.value));
-  cmdkInput.addEventListener('keydown', (ev) => {
-    if (ev.key === 'ArrowDown') { ev.preventDefault(); cmdkSetActive(cmdkActive + 1); }
-    else if (ev.key === 'ArrowUp') { ev.preventDefault(); cmdkSetActive(cmdkActive - 1); }
-    else if (ev.key === 'Enter') { ev.preventDefault(); runCmdk(cmdkActive); }
-    else if (ev.key === 'Escape') { ev.preventDefault(); closeCmdk(); }
-  });
-}
-if (cmdkList) {
-  cmdkList.addEventListener('click', (ev) => {
-    const item = ev.target.closest('.cmdk-item');
-    if (item) runCmdk(Number(item.getAttribute('data-idx')));
-  });
-}
-if (cmdkMask) {
-  cmdkMask.addEventListener('click', (ev) => { if (ev.target === cmdkMask) closeCmdk(); });
-}
-
-// ⌘K (mac) / Ctrl+K (win) 开关命令面板
-document.addEventListener('keydown', (ev) => {
-  if ((ev.metaKey || ev.ctrlKey) && (ev.key === 'k' || ev.key === 'K')) {
-    ev.preventDefault();
-    if (cmdkOpen) closeCmdk(); else openCmdk();
-  }
-});
 
 /* ---------- 3) 阅读页键盘导航 ---------- */
 let kbdIdx = -1;
@@ -4479,7 +4297,8 @@ function isTypingTarget(el) {
   return t === 'INPUT' || t === 'TEXTAREA' || t === 'BUTTON' || t === 'SELECT' || t === 'A' || el.isContentEditable;
 }
 document.addEventListener('keydown', (ev) => {
-  if (cmdkOpen) return;
+  // 面板开着时不响应 j/k（命令面板已 React 化，通过 window.__cmdkOpen 同步开合状态）
+  if (window.__cmdkOpen) return;
   if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
   if (isTypingTarget(document.activeElement)) return;
   if (!settingsMask.hidden || !lightbox.hidden) return;
@@ -4540,3 +4359,24 @@ async function cardSetFlag(id, patch) {
     return false;
   }
 }
+
+/* ============================================================
+ * window.shiyue 桥（混合期临时方案）
+ * ------------------------------------------------------------
+ * React 组件（如命令面板）通过这个对象读取 / 操作旧 app 的能力：
+ *   state            全局状态对象（原地修改，实时引用，feedList 等直接读）
+ *   switchView / applyTheme / openSettings / selectScope / jumpToFeed
+ *   focusSearchBox / exportOpml / shortFeedName / feedTitle
+ *   prefersReducedMotion / THEME_MODES / THEME_META
+ *   refresh / scrollTop    常用操作的小包装
+ * 注意：必须在文件末尾建立，上游 const（THEME_MODES 等）此时已初始化。
+ * 待视图与设置全部 React 化、旧 app.js 退役后，此桥一并拆除。
+ * ============================================================ */
+window.shiyue = {
+  state,
+  switchView, applyTheme, openSettings, selectScope, jumpToFeed,
+  focusSearchBox, exportOpml, shortFeedName, feedTitle, prefersReducedMotion,
+  THEME_MODES, THEME_META,
+  refresh: () => { const b = $('#refreshBtn'); if (b) b.click(); },
+  scrollTop: () => window.scrollTo({ top: 0, behavior: prefersReducedMotion() ? 'auto' : 'smooth' }),
+};

@@ -53,7 +53,8 @@ cd <项目目录>
 ./deploy.sh        # = git pull --ff-only && docker compose up -d --build
 ```
 
-- 只改了前端 `public/`：`git pull` 后刷新即生效；改了后端 `*.js`：`deploy.sh` 会自动重建镜像。
+- 前端已接入 **Vite 构建**（入口 `index.html` / `login.html` 在仓库根，React 源码在 `src/`）：任何改动都要 `docker compose up -d --build` 重建镜像才生效（ARM 服务器约 +30~60s）。
+- 本地纯前端联调：`npm ci && npm run dev`（Vite 5173，`/api` 代理到本地 3000 的后端）。
 - 部署后旧页面会提示「新版本已发布」，点一下即刷新。
 
 ## 在手机上用（PWA）
@@ -70,7 +71,7 @@ HTTPS 下用浏览器「添加到主屏幕」即可当 App；建议用反向代�
 
 ## 技术栈与结构
 
-Node 22（内置模块）+ PostgreSQL + 原生 HTML/CSS/JS；npm 依赖仅 `pg` 与 `undici`，无前端构建。
+Node 22（内置模块 + `pg` / `undici`）+ PostgreSQL + **Vite + React 渐进迁移**的前端：入口 `index.html` / `login.html` 在仓库根，新交互写在 `src/`，旧交互 `public/app.js` 逐步迁入。
 
 ```
 server.js  ── 单进程 HTTP 服务：路由 / 静态资源 / 定时调度
@@ -85,8 +86,9 @@ server.js  ── 单进程 HTTP 服务：路由 / 静态资源 / 定时调度
 | 路径 | 说明 |
 | --- | --- |
 | `server.js` / `db.js` / `rss.js` / `digest.js` / `proxy.js` | 后端 |
-| `public/` | 前端（原生 HTML/CSS/JS） |
-| `public/sw.js` | Service Worker（PWA） |
+| `index.html` / `login.html` | 前端入口（Vite 多页面双入口） |
+| `src/` | React 组件（渐进迁移中，如 `src/cmdk/` 命令面板） |
+| `public/` | 静态资源与旧交互（`app.js` / `style.css` / `sw.js`，构建时原样拷入 dist） |
 | `tools/gen-theme.mjs` | 生成并校验主题配色 |
 | `docker-compose.yml` / `Dockerfile` | 编排与构建 |
 

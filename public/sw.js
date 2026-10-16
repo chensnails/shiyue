@@ -12,6 +12,7 @@ const CACHE = `${VERSION}-static`;
 // 预缓存：应用外壳的静态资源（不含需要登录的接口数据）
 const PRECACHE = [
   '/login.html',
+  '/login.css',
   '/style.css',
   '/app.js',
   '/manifest.json',

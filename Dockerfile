@@ -1,4 +1,27 @@
 # 拾阅（shiyue）—— RSS 直连聚合 + 每日 AI 简报（ARM64 / AMD64 通用）
+# ---------------------------------------------------------------
+# 阶段一：构建前端（Vite + React，产出 dist/）
+# 多阶段构建：最终镜像不带 dev 依赖，也不带构建工具
+# ---------------------------------------------------------------
+FROM node:22-alpine AS builder
+
+WORKDIR /app
+
+# 先装依赖再拷源码，源码改动不会让依赖层缓存失效
+COPY package.json package-lock.json ./
+RUN npm ci
+
+# 构建输入：Vite 配置、两个入口 HTML、React 源码、public/ 静态资源
+# （style.css / app.js / sw.js / 图标经 publicDir 原样拷入 dist）
+COPY vite.config.mjs index.html login.html ./
+COPY src ./src
+COPY public ./public
+
+RUN npm run build
+
+# ---------------------------------------------------------------
+# 阶段二：运行时（复用此前单阶段镜像的时区 / 健康检查配置）
+# ---------------------------------------------------------------
 FROM node:22-alpine
 
 # 时区数据：定时摘要按 Asia/Shanghai 计算，日志时间也需要
@@ -13,12 +36,14 @@ ENV NODE_ENV=production \
     PORT=3000 \
     TZ=Asia/Shanghai
 
-# 先装依赖再拷源码，源码改动不会让依赖层缓存失效
+# 只装生产依赖（pg / undici）；React / Vite 属于构建期依赖，不进最终镜像
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 COPY server.js db.js rss.js digest.js proxy.js ./
-COPY public ./public
+
+# 前端构建产物：打进镜像（不再挂载 public/，改前端必须重新 build）
+COPY --from=builder /app/dist ./dist
 
 EXPOSE 3000
 

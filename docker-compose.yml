@@ -86,13 +86,11 @@ services:
     ports:
       - "${HOST_PORT:-3210}:3000"
 
-    volumes:
-      # 前端静态文件挂进来（只读）：改 public/ 下的东西不用重建镜像，
-      # 刷新页面即可生效（serveStatic 每请求 fs.readFile + Cache-Control: no-cache）。
-      # 镜像里也 COPY 了一份 public/ 作为兜底，独立 docker run 时仍能跑。
-      # 注意：只挂 public，后端 js 仍在镜像里 —— 改 server.js/db.js/rss.js/digest.js
-      # 必须 docker compose up -d --build 才生效。
-      - ./public:/app/public:ro
+    # 前端已改为 Vite 构建产物（dist 打进镜像），不再挂载 public/。
+    # 改 public/ 下的静态文件、src/ 下的 React 组件或后端 js，都需要
+    # docker compose up -d --build 重建镜像才生效（ARM 服务器上约 +30~60s）。
+    # 纯前端联调可本地 `npm run dev`（Vite 5173，/api 代理到 3000）。
+    # 镜像里也 COPY 了一份 dist 作为兜底，独立 docker run 时仍能跑。
 
     networks:
       - shiyue

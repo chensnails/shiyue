@@ -756,23 +756,11 @@
 <!-- 顶部阅读进度条（滚动驱动，轻量高级感） -->
 <div class="read-progress" id="readProgress" aria-hidden="true"></div>
 
-<!-- 命令面板 ⌘K / Ctrl+K（现代快捷键交互，参考 Linear / Vercel 命令面板） -->
-<div class="cmdk-mask" id="cmdkMask" hidden>
-  <div class="cmdk" role="dialog" aria-modal="true" aria-label="命令面板">
-    <div class="cmdk-input-wrap">
-      <svg class="search-ico" aria-hidden="true" focusable="false"><use href="#i-search"/></svg>
-      <input id="cmdkInput" class="cmdk-input" type="text" placeholder="输入命令或搜索…（⌘K / Ctrl+K 开关，↑↓ 选择，↵ 执行，Esc 关闭）" autocomplete="off" spellcheck="false">
-      <kbd class="cmdk-kbd" id="cmdkKbd">⌘K</kbd>
-    </div>
-    <div class="cmdk-list" id="cmdkList" role="listbox"></div>
-    <div class="cmdk-foot">
-      <span><kbd>↑</kbd><kbd>↓</kbd> 选择</span>
-      <span><kbd>↵</kbd> 执行</span>
-      <span><kbd>Esc</kbd> 关闭</span>
-    </div>
-  </div>
-</div>
+<!-- 命令面板 ⌘K / Ctrl+K（现代化快捷键交互，参考 Linear / Vercel 命令面板）。
+     已 React 化：组件见 src/cmdk/CommandPalette.jsx，由 main.jsx 挂载到下面的节点 -->
+<div id="cmdkRoot"></div>
 
 <script src="/app.js"></script>
+<script type="module" src="/src/main.jsx"></script>
 </body>
 </html>

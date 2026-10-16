@@ -18,6 +18,19 @@
 
 ---
 
+## [1.2.0] — 2026-10-16
+
+新增：
+
+- **前端接入 Vite + React 构建链**（React 渐进式迁移的 P0/P1 阶段）：
+  - Vite 多页面双入口：`index.html` / `login.html` 移至仓库根；`public/` 经 `publicDir` 原样拷入 `dist/`，CSS 与旧交互逻辑零改动。
+  - Dockerfile 改多阶段构建（builder 产出 dist → 运行时镜像只带生产依赖）；不再挂载 `./public:/app/public`，前端改动随镜像重建生效；`serveStatic` 优先读 `dist/`，未构建时回退 `public/`（fresh clone 可直接 `node server.js`）。
+  - `npm run dev` 本地 Vite 开发（5173，`/api` 代理到 3000）。
+- **⌘K / Ctrl+K 命令面板 React 化**（P1）：组件迁往 `src/cmdk/`（拼音表 / 命令构建 / 过滤 / 组件），键位、拼音过滤、分组与类名逐行等价，视觉与交互无变化；旧 app 通过 `window.shiyue` 桥向 React 组件提供能力（混合期临时方案，迁移完成后拆除）。
+- 登录页内联样式外提为 `public/login.css`（规避 Vite 在 Windows 上处理内联 `<style>` 的路径 bug），并加入 sw.js 预缓存清单。
+
+---
+
 ## [1.1.0] — 2026-10-16
 
 新增：
