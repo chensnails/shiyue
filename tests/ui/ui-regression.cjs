@@ -81,6 +81,11 @@ const miniFeeds = [
   { id: '3', url: 'https://blog.example.org/atom.xml', title: '某人的博客', customTitle: null, groupName: '', enabled: false, cardEnabled: true, refreshMinutes: null, sortOrder: 2, entryCount: 88, lastFetchedAt: null, status: null, error: '' },
 ];
 let miniGroupOrder = ['科技'];
+// 条目过滤规则（v2.7.0）：AccountPane 读 /api/prefs 的 filters，保存后由 mock 的 sanitize 回填
+let miniFilters = [
+  { id: 'f1', on: true, act: 'block', field: 'title', kind: 'kw', pattern: '广告' },
+  { id: 'f2', on: true, act: 'allow', field: 'desc', kind: 're', pattern: 'sk-' },
+];
 const miniSettingsSource = {
   refreshMinutes: 30, keepPerFeed: 300, keepDays: 0,
   timeoutSeconds: 25, concurrency: 3, autoRefreshMinutes: 0,
@@ -218,7 +223,7 @@ w.shiyue = {
 
     // ---- 模型 / 关于 / 偏好 ----
     if (url === '/api/prefs' && method === 'GET') {
-      return ok({ llm: prefsLlm, groupOrder: miniGroupOrder.slice(), appearance: {}, layout: {} });
+      return ok({ llm: prefsLlm, groupOrder: miniGroupOrder.slice(), appearance: {}, layout: {}, filters: miniFilters.slice() });
     }
     if (url === '/api/prefs' && method === 'POST') {
       if (!prefsPostOk) return bad('炸了', 500);
@@ -234,7 +239,21 @@ w.shiyue = {
         else if (body.llm.apiKey) { patch.apiKeySet = true; patch.apiKeyHint = 'sk-…abcd'; }
         prefsLlm = patch;
       }
-      return ok({ ok: true, groupOrder: miniGroupOrder.slice(), appearance: {}, layout: {} });
+      // v2.7.0：过滤规则 —— 复刻服务端 sanitizeFilters 的清洗口径（空模式丢弃）后回填
+      if (Array.isArray(body && body.filters)) {
+        miniFilters = body.filters
+          .filter((f) => f && typeof f === 'object' && typeof f.pattern === 'string' && f.pattern.trim())
+          .slice(0, 50)
+          .map((f, i) => ({
+            id: typeof f.id === 'string' && f.id.trim() ? f.id.trim().slice(0, 40) : 'f' + (i + 1),
+            on: f.on !== false,
+            act: f.act === 'allow' ? 'allow' : 'block',
+            field: ['title', 'desc', 'content', 'all'].indexOf(f.field) >= 0 ? f.field : 'all',
+            kind: f.kind === 're' ? 're' : 'kw',
+            pattern: f.pattern.trim().slice(0, 200),
+          }));
+      }
+      return ok({ ok: true, groupOrder: miniGroupOrder.slice(), appearance: {}, layout: {}, filters: miniFilters.slice() });
     }
     if (url === '/api/digest/test-llm') return ok({ ok: true, reply: 'pong' });
     if (url === '/api/version') return ok(versionResponse);
@@ -1387,6 +1406,82 @@ const withEFP = (el, fn) => {
     if (document.querySelector('#accUsersSec .sec-sub').textContent !== '共 2 个') throw new Error('计数: ' + document.querySelector('#accUsersSec .sec-sub').textContent);
   });
   t('安装指引显示当前域名', () => { if (document.querySelector('#installHost').textContent !== 'localhost:3000') throw new Error(document.querySelector('#installHost').textContent); });
+
+  // 条目过滤规则（v2.7.0）
+  t('过滤规则区渲染：从 /api/prefs 回填', () => {
+    const rows = document.querySelectorAll('[data-sec="acc-filters"] .filter-row');
+    if (rows.length !== 2) throw new Error('行数 ' + rows.length);
+    const r1 = rows[0], r2 = rows[1];
+    if (r1.querySelector('.filter-act').value !== 'block') throw new Error('r1 act');
+    if (r1.querySelector('.filter-field').value !== 'title') throw new Error('r1 field');
+    if (r1.querySelector('.filter-kind').value !== 'kw') throw new Error('r1 kind');
+    if (r1.querySelector('.filter-pattern').value !== '广告') throw new Error('r1 pattern');
+    if (!r1.querySelector('.filter-on').checked) throw new Error('r1 应勾选');
+    if (r2.querySelector('.filter-act').value !== 'allow') throw new Error('r2 act');
+    if (r2.querySelector('.filter-kind').value !== 're') throw new Error('r2 kind');
+    if (r2.querySelector('.filter-field').value !== 'desc') throw new Error('r2 field');
+    const sub = document.querySelector('[data-sec="acc-filters"] .sec-sub').textContent;
+    if (sub !== '2 条') throw new Error('sub: ' + sub);
+  });
+  // 添加一条规则（React 18：click 后 DOM 重绘在微任务，须移出 t() 再断言）
+  document.querySelector('#addFilterBtn').click();
+  await sleep(40);
+  t('添加规则：行数 +1，默认屏蔽/标题/关键词', () => {
+    const rows = document.querySelectorAll('[data-sec="acc-filters"] .filter-row');
+    if (rows.length !== 3) throw new Error('行数 ' + rows.length);
+    const r = rows[2];
+    if (r.querySelector('.filter-act').value !== 'block') throw new Error('默认 act');
+    if (r.querySelector('.filter-field').value !== 'title') throw new Error('默认 field');
+    if (r.querySelector('.filter-kind').value !== 'kw') throw new Error('默认 kind');
+    if (r.querySelector('.filter-pattern').value !== '') throw new Error('默认 pattern 应为空');
+    if (!r.querySelector('.filter-on').checked) throw new Error('默认应启用');
+  });
+  // 改新行的动作/范围/方式/模式（受控更新同样需等微任务）
+  setSelEl(document.querySelectorAll('[data-sec="acc-filters"] .filter-row')[2].querySelector('.filter-act'), 'allow');
+  setSelEl(document.querySelectorAll('[data-sec="acc-filters"] .filter-row')[2].querySelector('.filter-field'), 'content');
+  setSelEl(document.querySelectorAll('[data-sec="acc-filters"] .filter-row')[2].querySelector('.filter-kind'), 're');
+  setVal(document.querySelectorAll('[data-sec="acc-filters"] .filter-row')[2].querySelector('.filter-pattern'), 'v\\d+');
+  await sleep(40);
+  t('改字段：动作/范围/方式/模式都走受控更新', () => {
+    const r2 = document.querySelectorAll('[data-sec="acc-filters"] .filter-row')[2];
+    if (r2.querySelector('.filter-act').value !== 'allow') throw new Error('act 未更新');
+    if (r2.querySelector('.filter-field').value !== 'content') throw new Error('field 未更新');
+    if (r2.querySelector('.filter-kind').value !== 're') throw new Error('kind 未更新');
+    if (r2.querySelector('.filter-pattern').value !== 'v\\d+') throw new Error('pattern 未更新');
+  });
+  // 删掉第一条（f1 屏蔽「广告」）
+  document.querySelector('[data-sec="acc-filters"] .filter-row .filter-del').click();
+  await sleep(40);
+  t('删除规则：行数 -1', () => {
+    if (document.querySelectorAll('[data-sec="acc-filters"] .filter-row').length !== 2) throw new Error('删除后行数');
+  });
+  // 保存：提交剩余 2 条 → mock 按内容定位校验新规则
+  document.querySelector('#saveFilterBtn').click();
+  await sleep(80);
+  t('保存：POST /api/prefs filters + toast + ok', () => {
+    const body = lastPostBody('/api/prefs');
+    if (!Array.isArray(body.filters) || body.filters.length !== 2) throw new Error('filters: ' + JSON.stringify(body.filters));
+    const saved = body.filters.find((f) => f.pattern === 'v\\d+');
+    if (!saved) throw new Error('未提交新规则: ' + JSON.stringify(body.filters));
+    if (saved.act !== 'allow' || saved.field !== 'content' || saved.kind !== 're') throw new Error('保存内容: ' + JSON.stringify(saved));
+    const res = document.querySelector('#filterResult');
+    if (!res.classList.contains('ok') || res.textContent.indexOf('已保存') < 0) throw new Error(res.className + '/' + res.textContent);
+    if (!callsOf('toast').length) throw new Error('toast 未调用');
+  });
+  // 再造一条空模式规则：保存时服务端（mock sanitize）会丢弃，回填差量提示
+  document.querySelector('#addFilterBtn').click();
+  await sleep(40);
+  document.querySelector('#saveFilterBtn').click();
+  await sleep(80);
+  t('空模式被服务端丢弃：差量提示', () => {
+    const body = lastPostBody('/api/prefs');
+    if (!Array.isArray(body.filters) || body.filters.length !== 3) throw new Error('提交 3 条');
+    // mock 的 sanitize 丢掉空模式 → 回填 2 条 → 提示差量
+    const rows = document.querySelectorAll('[data-sec="acc-filters"] .filter-row');
+    if (rows.length !== 2) throw new Error('回填后行数 ' + rows.length);
+    const res = document.querySelector('#filterResult');
+    if (res.textContent.indexOf('1 条为空或非法，已丢弃') < 0) throw new Error('差量提示: ' + res.textContent);
+  });
 
   // 保存账号（改用户名 + 密码）
   setInput('#accUsername', 'tester2');

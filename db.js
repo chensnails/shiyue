@@ -340,7 +340,7 @@ module.exports = function createDb({ connectionString, log = console.log }) {
     SELECT f.id, f.url, f.title, f.site_url, f.description, f.icon_url,
            f.enabled, f.card_enabled, f.group_name, f.custom_title, f.refresh_minutes,
            f.sort_order, f.last_status, f.last_error, f.last_fetched_at, f.fail_streak,
-           f.created_at, COALESCE(e.n, 0) AS entry_count,
+           f.owner_id, f.created_at, COALESCE(e.n, 0) AS entry_count,
            COALESCE(u.n, 0) AS unread_count
     FROM feeds f
     LEFT JOIN (SELECT feed_id, count(*) AS n FROM entries GROUP BY feed_id) e
@@ -588,8 +588,9 @@ module.exports = function createDb({ connectionString, log = console.log }) {
       vals.push('%' + kw + '%');
       const p = `$${vals.length}`;
       // v2.6.0：全文检索覆盖正文 content（此前只搜标题/描述/标签，正文里出现的关键词搜不到）。
-      // 实测（线上 4.1 万条 / 234MB）：命中场景走 entries_pub_idx 倒序 + 提前 LIMIT，约 24ms；
-      // 零命中最坏要扫全表读 content detoast，约 1.4s —— 单用户自用可接受，故不建
+      // 实测（线上 4.1 万条 / 234MB，EXPLAIN ANALYZE + API 计时）：命中场景走 entries_pub_idx
+      // 倒序 + 提前 LIMIT，DB 层约 24ms；稀有词零命中最坏扫全表读 content detoast，
+      // DB 层约 1.4s、API 层约 2.7s —— 单用户自用可接受，故不建
       // content 的 trgm 索引（长正文 trgm 索引体积会是 title 索引的几十倍，不成比例）。
       // 等 entries 上到数十万级再重新评估 trgm / tsvector。
       where.push(`(e.title ILIKE ${p} OR e.description ILIKE ${p}

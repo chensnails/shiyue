@@ -21,7 +21,8 @@ const pkg = require('./package.json');
 const { int, bool, clampInt, clampNum, normUrl, compareVersion, isPrivateHost, groupsOf, imageCacheKey, groupByUrl } = require('./lib/util');
 const { compressImage, MAX_BYTES: IMG_MAX_BYTES } = require('./lib/image');
 const { parseOpml } = require('./lib/opml');
-const { sanitizeAppearance, userAppearance, sanitizeLayout, userLayout } = require('./lib/prefs');
+const { sanitizeAppearance, userAppearance, sanitizeLayout, userLayout, sanitizeFilters, userFilters } = require('./lib/prefs');
+const { applyFilters } = require('./lib/filter');
 const { toCard, toFeedDto } = require('./lib/dto');
 const { decryptSecret, maskSecret, hashPassword, safeEqual } = require('./lib/crypto');
 const { llmForStore, userLlmForStore, userLlmForView, resolveUserLlm } = require('./lib/llm');
@@ -336,14 +337,19 @@ async function doRefreshGroup(key, members) {
 
     // 同一份解析结果写回组内每个 feed（只读 items，可安全复用）
     let added = 0;
+    let filtered = 0;
     await Promise.all(members.map(async (m) => {
-      added += await db.upsertEntries(m.id, r.items);
+      // v2.7.0：条目过滤规则按成员 owner 逐人生效（同一 URL 多用户订阅时各过各的）
+      const rules = userFilters(usersById.get(numId(m.owner_id)));
+      const items = applyFilters(r.items, rules);
+      filtered += r.items.length - items.length;
+      added += await db.upsertEntries(m.id, items);
       await db.saveFeedMeta(m.id, {
         title: r.title, siteUrl: r.siteUrl, description: r.description, iconUrl: r.iconUrl,
         etag: r.etag, lastModified: r.lastModified, status: 'ok', error: null, failStreak: 0,
       }).catch(() => {});
     }));
-    return { url: key, notModified: false, added, total: r.items.length, feeds: members.length };
+    return { url: key, notModified: false, added, total: r.items.length, filtered, feeds: members.length };
   } catch (e) {
     const msg = String((e && e.message) || e).slice(0, 300);
     const limit = feedFailLimit();
@@ -418,20 +424,22 @@ async function refreshFeeds(feeds, { concurrency, total, startedAt = Date.now(),
   const added = results.reduce((n, r) => n + (r.added || 0), 0);
   const failed = results.filter((r) => r.error).length;
   const autoDisabled = results.reduce((n, r) => n + (r.autoDisabled || 0), 0);
+  const filtered = results.reduce((n, r) => n + (r.filtered || 0), 0);
   const skipped = total == null ? 0 : Math.max(0, total - feeds.length);
   lastRefresh = {
     at: Date.now(), startedAt, durationMs: Date.now() - startedAt,
-    results, added, pruned: prunedByCount + prunedByAge + prunedImg, prunedByAge, prunedImg, skipped, failed, autoDisabled,
+    results, added, pruned: prunedByCount + prunedByAge + prunedImg, prunedByAge, prunedImg, skipped, failed, autoDisabled, filtered,
   };
   log(`[rss] ${label}完成：${entries.length} 个 URL 组 / ${feeds.length} 个订阅，新增 ${added} 条`
     + (skipped ? `，跳过 ${skipped} 个（未开启采集或未到期）` : '')
     + (failed ? `，失败 ${failed} 个` : '')
     + (autoDisabled ? `，连续失败自动停用 ${autoDisabled} 个` : '')
+    + (filtered ? `，按过滤规则丢弃 ${filtered} 条` : '')
     + (prunedByCount ? `，按条数清理 ${prunedByCount} 条` : '')
     + (prunedByAge ? `，按时间清理 ${prunedByAge} 条` : '')
     + (prunedImg ? `，图片缓存清理 ${prunedImg} 张` : ''));
   return {
-    at: lastRefresh.at, results, added, failed, skipped, autoDisabled,
+    at: lastRefresh.at, results, added, failed, skipped, autoDisabled, filtered,
     pruned: lastRefresh.pruned, prunedByAge, prunedImg,
   };
 }
@@ -1244,6 +1252,7 @@ const server = http.createServer(async (req, res) => {
           groupOrder: (user.prefs && user.prefs.groupOrder) || [],
           appearance: userAppearance(user),
           layout: userLayout(user),
+          filters: userFilters(user),
           llm: userLlmForView(user.prefs, settings.cryptoSecret),
         });
         return;
@@ -1265,6 +1274,11 @@ const server = http.createServer(async (req, res) => {
         if (body.layout && typeof body.layout === 'object') {
           prefs.layout = sanitizeLayout(body.layout);
         }
+        // 条目过滤规则（v2.7.0）：整组替换。只在抓取写库前对新条目生效，
+        // 已入库的历史条目不动；保存即重新清洗（非法规则被丢弃而不是报错）
+        if (Array.isArray(body.filters)) {
+          prefs.filters = sanitizeFilters(body.filters);
+        }
         // 模型配置按账号保存：与已有配置合并（只覆盖传入字段，避免未改的 Key 被清空）；
         // apiKey 仅在填写时加密成文，clearApiKey 则清空
         if (body.llm && typeof body.llm === 'object') {
@@ -1278,6 +1292,7 @@ const server = http.createServer(async (req, res) => {
           groupOrder: prefs.groupOrder || [],
           appearance: sanitizeAppearance(prefs.appearance),
           layout: sanitizeLayout(prefs.layout),
+          filters: sanitizeFilters(prefs.filters),
         });
         return;
       }
@@ -1676,6 +1691,7 @@ async function buildStatus() {
       lastResult: lastRefresh.at ? {
         added: lastRefresh.added, pruned: lastRefresh.pruned,
         skipped: lastRefresh.skipped, failed: lastRefresh.failed, autoDisabled: lastRefresh.autoDisabled || 0,
+        filtered: lastRefresh.filtered || 0,
         durationMs: lastRefresh.durationMs,
       } : null,
       feeds: feedStats,

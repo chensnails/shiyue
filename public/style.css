@@ -2028,6 +2028,25 @@ body.is-dragging-feeds .drag-handle { cursor: grabbing; }
 .user-add input, .user-add select { flex: 1 1 120px; min-width: 0; }
 .user-add .btn { flex: 0 0 auto; }
 
+/* 条目过滤规则（账号 → 过滤规则，v2.7.0）：一行一条规则，窄屏自动换行 */
+.filter-row {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px;
+  background: var(--panel); margin-bottom: 8px;
+}
+.filter-row .filter-on { flex: 0 0 auto; accent-color: var(--accent); }
+.filter-row .filter-act, .filter-row .filter-field, .filter-row .filter-kind { flex: 0 0 auto; }
+.filter-row .filter-pattern {
+  flex: 1 1 160px; min-width: 0;
+  padding: 6px 9px; border: 1px solid var(--border); border-radius: 7px;
+  background: var(--bg); color: var(--text); font-family: inherit; font-size: 0.8125rem;
+}
+.filter-row .filter-pattern:focus { outline: none; border-color: var(--accent); }
+.filter-row .filter-del { flex: 0 0 auto; }
+.filter-row .filter-del:hover { color: var(--danger, #e5484d); }
+.filter-actions { margin: 2px 0 8px; }
+.filter-save { margin-top: 10px; display: flex; justify-content: flex-end; }
+
 .reader-list { display: flex; flex-direction: column; gap: 10px; max-width: var(--reader-width); margin: 0 auto; }
 
 .art-item {
