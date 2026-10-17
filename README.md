@@ -50,7 +50,7 @@ docker compose up -d --build
 
 ```bash
 cd <项目目录>
-./deploy.sh        # = git pull --ff-only && docker compose up -d --build
+./deploy.sh        # = git pull --ff-only && docker compose up -d --build + 健康检查 + 启动期错误日志扫描
 ```
 
 - 前端已接入 **Vite 构建**（入口 `index.html` / `login.html` 在仓库根，React 源码在 `src/`）：任何改动都要 `docker compose up -d --build` 重建镜像才生效（ARM 服务器约 +30~60s）。**全部界面（三大视图 / 设置弹层六面板 / App Shell 顶栏）与核心逻辑均已 React 化**：核心逻辑拆在 `src/core/*.js`，经 `@core` 别名共享为单例；原先并行的经典脚本 `public/app.js` 与 `window.shiyue` 桥已在 v2.0.0 拆除。

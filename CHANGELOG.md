@@ -18,6 +18,28 @@
 
 ---
 
+## [2.2.2] — 2026-10-17
+
+> **工程加固**：把 v2.2.1 事故的发现手法固化成部署护栏 —— 健康检查通过不再等于部署成功。
+
+### 背景
+
+v2.2.1 的 `imgCache` 事故是靠「部署后人工 grep 全站错误日志」抓到的。当时的健康检查只证明「进程活着」，对业务路径是否炸掉毫无感知 —— 容器 healthy、日志干净、测试全绿，但 `/api/img` 每个请求都在抛 `ReferenceError`。这意味着**下一次部署没人记得手动扫日志，故障就会静默上线**。
+
+### 变更
+
+- **`deploy.sh`：健康检查通过后新增启动期错误日志扫描**
+  - 扫最近 10 分钟的 `app` 容器日志，关键词覆盖 `ReferenceError` / `TypeError` / `SyntaxError` / `MODULE_NOT_FOUND` / `Cannot find module` / `unhandled` / `uncaught` / `ECONNREFUSED` / `EADDRINUSE` / `panic`。
+  - 命中即`exit 2`，**部署视为失败**，不会带着运行时错误继续上线（健康检查超时仍是 `exit 1`）。
+  - 收尾打印 `VERSION`，避免部署完还要手动确认版本号。
+- **新增 `tests/server/deploy-guard.cjs`**：5 项静态断言钉住这道护栏不被误删 —— 日志扫描存在、关键词齐全、健康检查通过后不直接 `exit 0`、扫到错误必须非零退出、超时路径非零退出。已用「把 `exit 0` 塞回健康检查分支」验证确实报 FAIL。接入 `npm run test:server` 与 CI。
+
+### 结论
+
+往后 `./deploy.sh` 跑完不需要再手工 `docker logs | grep` —— 它自己会拦。
+
+---
+
 ## [2.2.1] — 2026-10-17
 
 > **紧急修复**：v2.2.0 的重构误删了图片代理的缓存状态，`/api/img` 全线 500。

@@ -26,8 +26,9 @@ jobs:
       - name: UI 回归测试
         run: npm run test:ui
 
-      # 含两项静态校验：① Dockerfile 有没有漏拷 lib/（镜像构建成功但容器启动即崩）
+      # 含三项静态校验：① Dockerfile 有没有漏拷 lib/（镜像构建成功但容器启动即崩）
       # ② 抽走的顶层标识符有没有留下裸引用（v2.2.1 的 imgCache 教训）
+      # ③ deploy.sh 的启动期错误日志扫描护栏还在不在（v2.2.2）
       - name: 后端单测 + 静态校验
         run: npm run test:server
 
