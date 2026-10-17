@@ -18,6 +18,42 @@
 
 ---
 
+## [2.1.0] — 2026-10-17
+
+> 架构整理：拆分核心单文件、接入 CI、覆盖层 React 化。对外接口零变更。
+
+### A1 · 核心逻辑拆分
+
+- **`src/core/app.js` 退役**，按职责拆成 8 个 ES 模块，**依赖单向无环**：
+  `util.js`（DOM 选择器 / `apiFetch` / 格式化 / toast / 链接菜单）→ `state.js`（全局 `state`、layout/appearance/theme 偏好、滚动锁、设置弹层开合）→ `feeds.js`（频道加载 / 卡片分页 / 筛选 / 视图模式）→ `reader.js`（文章数据、抽屉 / 手势 / 无限滚动 / 键盘导航）→ `autorefresh.js`（定时刷新 / 新内容浮标）→ `ui.js`（刷新 / OPML / `switchView` / 灯箱 / 折叠分组 / 安装提示 / `shellSnapshot`）→ `bootstrap.js`（首屏主题与视图、登录态校验、首次加载、深链）→ `index.js`（汇总 `core` 单例）。
+- **组件零改动**：`@core` 别名仍指向 `src/core/index.js`，`core.*` 接口一一保持。
+- 删除拆分过程中发现的重复导出 `prefersReducedMotion`（`util.js` 与 `state.js` 各有一份）。
+
+### A2 · 持续集成
+
+- 新增 `.github/workflows/ci.yml`：push / PR 到 `main` 时自动跑 `npm ci` → `npm run build` → `npm run test:ui` → `node --check server.js`（Node 22）。
+
+### A3 · 清理
+
+- 全仓代码注释、`README.md`、`CONTRIBUTING.md`、`docs/开发文档.md` 中的 `src/core/app.js` 路径引用统一更新为 `src/core/*.js`。
+- `index.html` 里三段指令式覆盖层 DOM 移除（见下），净减 ~15 行。
+
+### A4 · 覆盖层 React 化
+
+- **`toast` / 「N 条新内容」浮标 / 图片灯箱改由 `src/ui/Overlays.jsx` 渲染**，挂载到新的 `#overlaysRoot`。
+- 核心侧不再直接改 DOM，改为维护状态（`util.toastState` / `autorefresh.newPillState` / `ui.lightboxState`）并派发 `__overlaysTick`，组件监听后重读快照重绘 —— 与顶栏 `__shellTick` 同一套范式。
+- 新增 core 接口：`getToastState` / `getNewPillState` / `getLightboxState` / `applyPendingFresh` / `openLightbox` / `closeLightbox`。
+- CSS 与类名零改动（`.toast` / `.new-pill` / `.lightbox` 全部沿用）。
+- **至此页面上不再有任何由核心直接操作的展示性 DOM。**
+
+### 测试
+
+- `npm run test:ui` 新增 9 项覆盖层用例（toast 三态 / 浮标显隐与点击 / 灯箱渲染与关闭），**204 项全绿**。
+- 挂载点回归断言扩充到 8 个（含 `overlaysRoot`）。
+- 真实核心冒烟用例的接口清单同步补上 6 个覆盖层接口。
+
+---
+
 ## [2.0.0] — 2026-10-17
 
 > **MAJOR：前端架构收口。** 渐进式 React 迁移完成——不再有并行的经典脚本，也不再依赖 `window` 全局桥。

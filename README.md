@@ -53,7 +53,7 @@ cd <项目目录>
 ./deploy.sh        # = git pull --ff-only && docker compose up -d --build
 ```
 
-- 前端已接入 **Vite 构建**（入口 `index.html` / `login.html` 在仓库根，React 源码在 `src/`）：任何改动都要 `docker compose up -d --build` 重建镜像才生效（ARM 服务器约 +30~60s）。**全部界面（三大视图 / 设置弹层六面板 / App Shell 顶栏）与核心逻辑均已 React 化**：核心逻辑在 `src/core/app.js`，经 `@core` 别名共享为单例；原先并行的经典脚本 `public/app.js` 与 `window.shiyue` 桥已在 v2.0.0 拆除。
+- 前端已接入 **Vite 构建**（入口 `index.html` / `login.html` 在仓库根，React 源码在 `src/`）：任何改动都要 `docker compose up -d --build` 重建镜像才生效（ARM 服务器约 +30~60s）。**全部界面（三大视图 / 设置弹层六面板 / App Shell 顶栏）与核心逻辑均已 React 化**：核心逻辑拆在 `src/core/*.js`，经 `@core` 别名共享为单例；原先并行的经典脚本 `public/app.js` 与 `window.shiyue` 桥已在 v2.0.0 拆除。
 - 本地纯前端联调：`npm ci && npm run dev`（Vite 5173，`/api` 代理到本地 3000 的后端）。
 - **UI 回归测试**：`npm ci && npm run test:ui`（jsdom 中挂载真实 React 组件，覆盖设置弹层六面板 / AI 视图 / 卡片视图，160+ 断言）。
 - 部署后端与前端一起重建；页面本身不主动提示更新（如需拿到新代码，请手动刷新）。

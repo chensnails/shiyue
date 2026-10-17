@@ -22,6 +22,7 @@ const dom = new JSDOM('<!DOCTYPE html><html><body>' +
   '<div id="readerRoot"></div>' +
   '<header class="topbar" id="topbarRoot"></header>' +
   '<div id="shellRoot"></div>' +
+  '<div id="overlaysRoot"></div>' +
   '</body></html>', {
   url: 'http://localhost:3000/',
   pretendToBeVisual: true,
@@ -112,6 +113,13 @@ let shellSnap = {
   installReady: false, statVisible: false,
 };
 let refreshDeferred = null;   // 非空时 refresh() 返回它（测忙态）
+/* ---- 覆盖层（toast / 新内容浮标 / 灯箱，v2.1.0 React 化）测试可控状态 ---- */
+let overlayState = {
+  toast: { msg: '', ok: true, show: false },
+  pill: { show: false, text: '' },
+  box: { src: '', show: false },
+};
+const overlaysTick = () => w.dispatchEvent(new w.Event('__overlaysTick'));
 // /api/status 快照（字段对齐 server.js 的实际返回）
 const statusPayload = () => ({
   app: {
@@ -468,6 +476,13 @@ w.shiyue = {
   getShell: () => Object.assign({}, shellSnap),
   switchView: (v) => { calls.push(['switchView', v]); shellSnap.view = v; shellSnap.statVisible = v === 'cards'; shellTick(); },
   refresh: () => { calls.push(['refresh']); return refreshDeferred || Promise.resolve(); },
+  // —— v2.1.0：覆盖层（组件见 src/ui/Overlays.jsx） ——
+  getToastState: () => Object.assign({}, overlayState.toast),
+  getNewPillState: () => Object.assign({}, overlayState.pill),
+  getLightboxState: () => Object.assign({}, overlayState.box),
+  applyPendingFresh: () => { calls.push(['applyPendingFresh']); },
+  openLightbox: (src) => { calls.push(['openLightbox', src]); overlayState.box = { src, show: true }; overlaysTick(); },
+  closeLightbox: () => { calls.push(['closeLightbox']); overlayState.box = { src: '', show: false }; overlaysTick(); },
   cycleTheme: () => calls.push(['cycleTheme']),
   openSettings: (t) => { calls.push(['openSettings', t]); },
   // v1.7.0：AI 视图桥（P3a）
@@ -603,12 +618,14 @@ require('./.build/mount-ai.cjs');
 require('./.build/mount-cards.cjs');
 require('./.build/mount-reader.cjs');
 require('./.build/mount-shell.cjs');
+require('./.build/mount-overlays.cjs');
 const __mount = w.__mount;
 const __mountAi = w.__mountAi;
 const __mountCards = w.__mountCards;
 const __mountReader = w.__mountReader;
 const __mountTopBar = w.__mountTopBar;
 const __mountReadProgress = w.__mountReadProgress;
+const __mountOverlays = w.__mountOverlays;
 __mount(document.getElementById('settingsRoot'));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -681,7 +698,7 @@ const withEFP = (el, fn) => {
   // 设置按钮失效（直到 v1.8.2 才发现）。这里把四个挂载点钉死。
   const indexHtml = fs.readFileSync(path.join(__dirname, '..', '..', 'index.html'), 'utf8');
   t('index.html：React 挂载点齐全', () => {
-    for (const id of ['settingsRoot', 'cmdkRoot', 'aiRoot', 'cardsRoot', 'readerRoot', 'topbarRoot', 'shellRoot']) {
+    for (const id of ['settingsRoot', 'cmdkRoot', 'aiRoot', 'cardsRoot', 'readerRoot', 'topbarRoot', 'shellRoot', 'overlaysRoot']) {
       if (indexHtml.indexOf('id="' + id + '"') < 0) throw new Error('缺 #' + id);
     }
   });
@@ -2064,7 +2081,66 @@ const withEFP = (el, fn) => {
     });
   }
 
-  // ============ 冒烟：真实核心模块（src/core/app.js）顶层加载无异常 ============
+  // ============ 覆盖层：toast / 新内容浮标 / 灯箱（v2.1.0 React 化） ============
+  __mountOverlays(document.getElementById('overlaysRoot'));
+  await sleep(30);
+  const O = (sel) => document.querySelector('#overlaysRoot ' + sel);
+
+  t('toast：初始为空且不显示', () => {
+    const el = O('.toast');
+    if (!el) throw new Error('无 .toast');
+    if (el.className !== 'toast') throw new Error('class: ' + el.className);
+  });
+  overlayState.toast = { msg: '订阅已添加', ok: true, show: true };
+  overlaysTick();
+  await sleep(20);
+  t('toast：show + ok + 文案', () => {
+    const el = O('.toast');
+    if (el.className !== 'toast show ok') throw new Error('class: ' + el.className);
+    if (el.textContent !== '订阅已添加') throw new Error('text: ' + el.textContent);
+  });
+  overlayState.toast = { msg: '操作失败', ok: false, show: true };
+  overlaysTick();
+  await sleep(20);
+  t('toast：失败态无 .ok', () => {
+    const el = O('.toast');
+    if (el.className !== 'toast show') throw new Error('class: ' + el.className);
+  });
+
+  t('浮标：默认隐藏', () => { if (!O('.new-pill') || O('.new-pill').hidden !== true) throw new Error('应隐藏'); });
+  overlayState.pill = { show: true, text: '3 条新内容' };
+  overlaysTick();
+  await sleep(20);
+  t('浮标：显示 + 文案', () => {
+    const el = O('.new-pill');
+    if (el.hidden) throw new Error('应显示');
+    if (el.textContent.indexOf('3 条新内容') < 0) throw new Error(el.textContent);
+  });
+  O('.new-pill').click();
+  await sleep(10);
+  t('点浮标 → applyPendingFresh', () => {
+    if (!callsOf('applyPendingFresh').length) throw new Error('未触发');
+  });
+
+  t('灯箱：默认不渲染', () => { if (O('.lightbox')) throw new Error('不应存在'); });
+  overlayState.box = { src: 'https://example.com/a.png', show: true };
+  overlaysTick();
+  await sleep(20);
+  t('灯箱：显示 + 图片 src', () => {
+    const el = O('.lightbox');
+    if (!el) throw new Error('无 .lightbox');
+    if (el.getAttribute('role') !== 'dialog') throw new Error('role 不对');
+    const img = O('.lightbox-img');
+    if (!img || img.getAttribute('src') !== 'https://example.com/a.png') throw new Error('src 不对');
+    if (!O('.lightbox-hint')) throw new Error('无提示');
+  });
+  O('.lightbox').click();
+  await sleep(10);
+  t('点灯箱 → closeLightbox', () => {
+    if (!callsOf('closeLightbox').length) throw new Error('未触发');
+  });
+
+  // ============ 冒烟：真实核心模块（src/core/index.js）顶层加载无异常 ============
   // 背景：v1.9.0 曾因桥里引用了不存在的标识符，顶层抛 ReferenceError → 整页 JS 中断
   // （node --check 查不出）。本用例在 jsdom 里真实执行核心模块的顶层代码 + init()。
   {
@@ -2107,6 +2183,8 @@ const withEFP = (el, fn) => {
         'cardsSearch', 'cardsFilterFeed', 'cardsSort', 'cardsSize', 'cardsView', 'cardsTag',
         'cardsLoadMore', 'cardsSetFlag', 'filterEntries', 'getAiPage', 'setAiPage', 'promptInstall',
         'openSettings', 'toast', 'apiFetch', 'isAdmin', 'exportOpml', 'bindSections', 'groupFeeds',
+        'getToastState', 'getNewPillState', 'getLightboxState', 'applyPendingFresh',
+        'openLightbox', 'closeLightbox',
       ];
       for (const k of need) if (c2[k] === undefined) throw new Error('core 缺 ' + k);
     });

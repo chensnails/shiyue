@@ -5,7 +5,7 @@
 //   login.html  登录页（独立页面，自包含样式）
 // 其余静态资源（style.css / sw.js / 图标）仍放 public/，由 publicDir 原样拷入 dist/。
 //
-// 全部界面已 React 化（v2.0.0）：核心逻辑在 src/core/app.js，经别名 `@core` 暴露 `core` 单例，
+// 全部界面已 React 化（v2.0.0）：核心逻辑拆在 src/core/*.js（util / state / feeds / reader / autorefresh / ui / bootstrap），经别名 `@core` 暴露 `core` 单例，
 // 组件统一 `import { core } from '@core'`；原先的 window.shiyue 全局桥已拆除，
 // public/app.js 亦已退役（不再有经典脚本）。
 

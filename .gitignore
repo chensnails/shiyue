@@ -29,3 +29,6 @@ npm-debug.log*
 
 # UI 回归测试的 esbuild 产物
 tests/ui/.build/
+
+# 本地临时脚本产物
+.build/

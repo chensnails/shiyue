@@ -15,7 +15,7 @@
 
 ## 前端容易踩的点
 
-- **`src/core/app.js` 是 ES 模块，顶层就往下跑** —— 在靠前的位置同步调用一个「内部会读后面 `const` 常量」的函数，会踩 TDZ：`ReferenceError: Cannot access 'APPR_DEFAULTS' before initialization`，而且**整页 JS 就此中断、页面一片空白**，排查时很难第一时间想到是执行顺序。所以主题 / 视图 / 外观的首次应用统一延后到 `requestAnimationFrame` 里（DOM 早已就绪，晚一个 tick 不闪，`<head>` 内联脚本已先写好首屏值）。同理，`applyTheme()` 内部不要引用定义在它后面的 `APPR_VALUES` 这类常量。
+- **`src/core/*.js` 都是 ES 模块，顶层就往下跑** —— 在靠前的位置同步调用一个「内部会读后面 `const` 常量」的函数，会踩 TDZ：`ReferenceError: Cannot access 'APPR_DEFAULTS' before initialization`，而且**整页 JS 就此中断、页面一片空白**，排查时很难第一时间想到是执行顺序。所以主题 / 视图 / 外观的首次应用统一延后到 `requestAnimationFrame` 里（DOM 早已就绪，晚一个 tick 不闪，`<head>` 内联脚本已先写好首屏值）。同理，`applyTheme()` 内部不要引用定义在它后面的 `APPR_VALUES` 这类常量。
 - **颜色只引用语义 token，别写死色值**：`style.css` 顶部一次性定义全部变量，深色由 `html[data-theme="dark"]` 整体覆盖。主色分三个角色，混用就会出对比度问题 —— `--accent` 是**填充色**（按钮底、激活胶囊底、圆点），`--accent-text` 是**主色当文字/图标**用（深色下比 `--accent` 更亮、亮色下更暗，专为可读性补偿），`--accent-strong` 是填充色的 hover 态；填充色上的文字一律用 `--on-accent`（深色下主色偏亮，那里得用深色字而不是白字）。改色请改 `tools/gen-theme.mjs` 再重新生成 —— 脚本会把 12 套配色（6 主色 × 深浅）的对比度逐项校验一遍，任一项不达标就 `exit 1`。
 - **图标基类不能漏**：所有图标都是 `<svg>` 引用顶部 sprite 里的 `<symbol>`，尺寸 / 描边 / 填充由基类规则统一给。这条规则里除了 `.ico`，还必须列上那些用**自己类名**的图标（`.search-ico` / `.sec-arrow` / `.art-caret` / `.rd-group-chip-*` / `.new-pill-ico`）—— 漏掉任何一个，那个 `<svg>` 就没有宽高约束，会被撑成一大块黑图形。写自动化断言时记得上下都卡：既不能是 0 尺寸，也不能超大。
 - **字号全部用 `rem`**：`html[data-font-size="s|m|l"]` 改根字号就能整站等比缩放（15 / 16 / 17.5px）。新写 `font-size` 请用 rem，写 px 会让「字号」这个设置失效。阅读宽度也用 rem，这样调大字号时每行字数基本不变。
