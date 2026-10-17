@@ -134,9 +134,8 @@ function CopyButton({ e }) {
 
 function OpenButton({ e }) {
   const url = e.sourceUrl || e.link || null;
-  if (!url) {
-    return <span className="btn-open disabled" title="没有原文地址" aria-label="没有原文地址"><Icon n="external" /></span>;
-  }
+  // 无原文地址时干脆不渲染：置灰的「打开」看起来像上了锁，反而引人误会（v2.2.4）
+  if (!url) return null;
   return (
     <a className="btn-open" href={url} target="_blank" rel="noopener noreferrer"
       title="打开原文章" aria-label="打开原文章"><Icon n="external" /></a>

@@ -2898,9 +2898,13 @@ body { padding-bottom: env(safe-area-inset-bottom, 0px); }
   outline-offset: -2px;
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
-/* 卡片页标记已读 / 收藏后的轻量视觉反馈（与阅读页语义一致） */
-.card.is-read,
-.row-item.is-read { opacity: 0.6; }
+/* 卡片页标记已读 / 收藏后的轻量视觉反馈（与阅读页语义一致）。
+   已读只压暗标题与摘要：整卡 opacity 会把封面和按钮一起蒙灰，
+   看起来像被遮罩 / 上了锁（v2.2.4 反馈），所以改为文字级弱化。 */
+.card.is-read .card-title,
+.card.is-read .card-desc,
+.row-item.is-read .row-title,
+.row-item.is-read .row-desc { opacity: .55; }
 .card.is-fav,
 .row-item.is-fav { box-shadow: inset 3px 0 0 var(--accent); }
 

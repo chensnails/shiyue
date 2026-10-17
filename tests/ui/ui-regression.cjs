@@ -582,7 +582,7 @@ const readerTick = () => w.dispatchEvent(new w.Event('__readerTick'));
 
 /** 阅读页条目（P3c 测试用） */
 const READER_ENTRIES = () => ([
-  { id: 'r1', name: '文章一', tags: ['标签A'], size: '2.5G', date: '2026-10-15T10:00:00Z', feedName: '例子星球 - Telegram Channel', isRead: false, isFavorite: false },
+  { id: 'r1', name: '文章一', tags: ['标签A'], size: '2.5G', date: '2026-10-15T10:00:00Z', feedName: '例子星球 - Telegram Channel', isRead: false, isFavorite: false, sourceUrl: 'https://example.com/a1' },
   { id: 'r2', name: '文章二', tags: [], size: '', date: '2026-10-14T10:00:00Z', feedName: 'demo', isRead: true, isFavorite: true },
 ]);
 const readerSetEntries = (list) => { w.shiyue.state.rdEntries = list; readerTick(); };
@@ -1767,11 +1767,14 @@ const withEFP = (el, fn) => {
     if (c1.querySelector('.badge-size').textContent !== '1.2G') throw new Error('体积');
     if (c1.querySelectorAll('.mini-tag').length !== 2) throw new Error('标签数');
     if (c1.querySelector('.badge-idx').textContent !== '2026-10-15') throw new Error('日期: ' + c1.querySelector('.badge-idx').textContent);
+    if (!c1.querySelector('.card-media-actions a.btn-open[href]')) throw new Error('有原文地址应有打开按钮');
   });
   t('无图卡片状态类（已读/收藏）', () => {
     const c2 = C('#grid .card[data-id="e2"]');
     if (!c2.classList.contains('is-read') || !c2.classList.contains('is-fav')) throw new Error('缺 is-read/is-fav');
     if (!c2.querySelector('.card-foot .btn-copy')) throw new Error('无图卡片复制按钮应在底部操作条');
+    // v2.2.4：无原文地址不再渲染置灰「打开」按钮（曾被误读为「上锁」）
+    if (c2.querySelector('.btn-open')) throw new Error('无原文地址不应渲染打开按钮');
   });
 
   // 搜索（去抖）
