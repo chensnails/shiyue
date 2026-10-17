@@ -10,9 +10,10 @@
  *   的开合仍按账号持久化，经桥 bindSections 复用同一机制。
  */
 
+import { core } from '@core';
 import React, { useEffect, useRef, useState } from 'react';
 
-const S = () => (typeof window !== 'undefined' ? window.shiyue : null);
+const S = () => core;   // 核心逻辑单例（@core，v2.0.0 起改为模块引用）
 
 /** test-result 提示：ok 时 4s 后自动清除，err 常驻（与旧 showResult 语义一致） */
 function useResult(state) {

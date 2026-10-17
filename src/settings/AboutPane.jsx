@@ -2,9 +2,10 @@
  * 行为与旧实现等价：进入面板拉一次 /api/version，检查更新 POST /api/version/check，
  * 三态结果（upd / ok / err）复用旧 test-result 类名，样式零改动。 */
 
+import { core } from '@core';
 import React, { useEffect, useState } from 'react';
 
-const S = () => (typeof window !== 'undefined' ? window.shiyue : null);
+const S = () => core;   // 核心逻辑单例（@core，v2.0.0 起改为模块引用）
 
 const GH_REPO = 'https://github.com/chensnails/shiyue';
 

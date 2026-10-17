@@ -53,7 +53,7 @@ cd <项目目录>
 ./deploy.sh        # = git pull --ff-only && docker compose up -d --build
 ```
 
-- 前端已接入 **Vite 构建**（入口 `index.html` / `login.html` 在仓库根，React 源码在 `src/`）：任何改动都要 `docker compose up -d --build` 重建镜像才生效（ARM 服务器约 +30~60s）。**三大视图（文章 / 卡片 / AI）、设置弹层六面板与 App Shell 顶栏均已 React 化**，旧 `public/app.js` 现主要承担逻辑 / 状态与残留胶水。
+- 前端已接入 **Vite 构建**（入口 `index.html` / `login.html` 在仓库根，React 源码在 `src/`）：任何改动都要 `docker compose up -d --build` 重建镜像才生效（ARM 服务器约 +30~60s）。**全部界面（三大视图 / 设置弹层六面板 / App Shell 顶栏）与核心逻辑均已 React 化**：核心逻辑在 `src/core/app.js`，经 `@core` 别名共享为单例；原先并行的经典脚本 `public/app.js` 与 `window.shiyue` 桥已在 v2.0.0 拆除。
 - 本地纯前端联调：`npm ci && npm run dev`（Vite 5173，`/api` 代理到本地 3000 的后端）。
 - **UI 回归测试**：`npm ci && npm run test:ui`（jsdom 中挂载真实 React 组件，覆盖设置弹层六面板 / AI 视图 / 卡片视图，160+ 断言）。
 - 部署后端与前端一起重建；页面本身不主动提示更新（如需拿到新代码，请手动刷新）。
@@ -72,7 +72,7 @@ HTTPS 下用浏览器「添加到主屏幕」即可当 App；建议用反向代�
 
 ## 技术栈与结构
 
-Node 22（内置模块 + `pg` / `undici`）+ PostgreSQL + **Vite + React 渐进迁移**的前端：入口 `index.html` / `login.html` 在仓库根，新交互写在 `src/`，旧交互 `public/app.js` 逐步迁入。
+Node 22（内置模块 + `pg` / `undici`）+ PostgreSQL + **Vite + React** 前端：入口 `index.html` / `login.html` 在仓库根，界面与核心逻辑都在 `src/`（`src/core/` 是数据 / 状态 / 偏好引擎）。
 
 ```
 server.js  ── 单进程 HTTP 服务：路由 / 静态资源 / 定时调度
@@ -88,9 +88,9 @@ server.js  ── 单进程 HTTP 服务：路由 / 静态资源 / 定时调度
 | --- | --- |
 | `server.js` / `db.js` / `rss.js` / `digest.js` / `proxy.js` | 后端 |
 | `index.html` / `login.html` | 前端入口（Vite 多页面双入口） |
-| `src/` | React 组件（`shell/` 顶栏与进度条、`cmdk/` 命令面板、`settings/` 设置弹层六面板、`ai/` AI 视图、`views/` 文章与卡片视图） |
+| `src/` | React 组件（`core/` 核心逻辑单例、`shell/` 顶栏与进度条、`cmdk/` 命令面板、`settings/` 设置弹层六面板、`ai/` AI 视图、`views/` 文章与卡片视图） |
 | `tests/ui/` | UI 回归测试（jsdom 运行时挂载，`npm run test:ui`） |
-| `public/` | 静态资源与旧交互（`app.js` / `style.css` / `sw.js`，构建时原样拷入 dist） |
+| `public/` | 静态资源（`style.css` / `login.css` / `sw.js` / 图标，构建时原样拷入 dist） |
 | `tools/gen-theme.mjs` | 生成并校验主题配色 |
 | `docker-compose.yml` / `Dockerfile` | 编排与构建 |
 

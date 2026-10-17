@@ -3,12 +3,11 @@
 // 多页面应用（MPA）：两个入口 HTML 都在仓库根 ——
 //   index.html  主站（阅读 / 卡片 / AI / 设置）
 //   login.html  登录页（独立页面，自包含样式）
-// 其余静态资源（app.js / style.css / sw.js / 图标）仍放 public/，
-// 由 publicDir 原样拷入 dist/，CSS 与旧 JS 一行不改。
+// 其余静态资源（style.css / sw.js / 图标）仍放 public/，由 publicDir 原样拷入 dist/。
 //
-// React 采用渐进式接入：src/ 下的新组件通过 <script type="module">
-// 挂载到旧 HTML 的挂载点上，期间通过 window.shiyue 桥接旧全局能力，
-// 迁移完成后桥接层逐步拆除。
+// 全部界面已 React 化（v2.0.0）：核心逻辑在 src/core/app.js，经别名 `@core` 暴露 `core` 单例，
+// 组件统一 `import { core } from '@core'`；原先的 window.shiyue 全局桥已拆除，
+// public/app.js 亦已退役（不再有经典脚本）。
 
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
@@ -16,7 +15,13 @@ import path from 'node:path';
 
 export default defineConfig({
   plugins: [react()],
-  // public/ 原样拷贝到 dist/：style.css / app.js / sw.js / 图标 / manifest
+  resolve: {
+    alias: {
+      // 核心逻辑单例（src/core/index.js → app.js）；测试用同名别名换成替身
+      '@core': path.resolve(import.meta.dirname, 'src/core/index.js'),
+    },
+  },
+  // public/ 原样拷贝到 dist/：style.css / sw.js / 图标 / manifest
   publicDir: 'public',
   build: {
     outDir: 'dist',

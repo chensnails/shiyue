@@ -1,12 +1,13 @@
 /* 命令面板 React 组件（⌘K / Ctrl+K 开关）。
  * 从旧 public/app.js 的原生 DOM 实现逐行为等价移植：
  * 键位（↑↓/↵/Esc）、拼音过滤、分组渲染、类名全部保持一致，
- * 视觉与交互零变化；动作通过 window.shiyue 桥接旧 app 全局能力。 */
+ * 视觉与交互零变化；动作经 `@core` 单例调用核心逻辑。 */
 
+import { core } from '@core';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { buildCommands, cmdkFilter } from './commands.js';
 
-const BRIDGE = () => (typeof window !== 'undefined' ? window.shiyue : null);
+const BRIDGE = () => core;   // 核心逻辑单例（@core）
 
 export function CommandPalette() {
   const [open, setOpen] = useState(false);

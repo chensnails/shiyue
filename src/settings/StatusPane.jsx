@@ -10,9 +10,10 @@
  * - 类名与旧 DOM 完全一致，样式零改动。
  */
 
+import { core } from '@core';
 import React, { useEffect, useRef, useState } from 'react';
 
-const S = () => (typeof window !== 'undefined' ? window.shiyue : null);
+const S = () => core;   // 核心逻辑单例（@core，v2.0.0 起改为模块引用）
 
 /* ---------- 纯格式化（自旧 app.js 迁移，纯函数、不依赖 DOM） ---------- */
 

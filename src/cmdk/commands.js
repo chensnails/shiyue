@@ -1,10 +1,9 @@
-/* 命令面板的命令清单与过滤逻辑（从旧 public/app.js 的 cmdk 模块移植）。
- * 具体动作通过 window.shiyue 桥接对象注入（混合期临时方案），
- * 本模块只保留纯逻辑，不直接触碰旧全局。 */
+/* 命令面板的命令清单与过滤逻辑（从原 public/app.js 的 cmdk 模块移植）。
+ * 具体动作由调用方把 `core` 单例作为 S 传入，本模块只保留纯逻辑，不直接触碰全局。 */
 
 import { cjkPinyin } from './pinyin.js';
 
-/* 构建命令列表。S = window.shiyue 桥接对象，需提供：
+/* 构建命令列表。S = core 单例，需提供：
  * switchView / applyTheme / openSettings / selectScope / jumpToFeed /
  * focusSearchBox / exportOpml / refresh / scrollTop / state /
  * shortFeedName / feedTitle / prefersReducedMotion / THEME_MODES / THEME_META */

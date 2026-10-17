@@ -12,9 +12,10 @@
  * 「/」聚焦搜索（经 window.__cardsFocusSearch 委托到本组件的输入框）。
  */
 
+import { core } from '@core';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
-const S = () => (typeof window !== 'undefined' ? window.shiyue : null);
+const S = () => core;   // 核心逻辑单例（@core，v2.0.0 起改为模块引用）
 const SKELETON_N = 8;
 
 const Icon = ({ n }) => (

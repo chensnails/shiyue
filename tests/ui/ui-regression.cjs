@@ -555,6 +555,9 @@ w.shiyue = {
     return names.map((name) => ({ name, feeds: map.get(name) }));
   },
 };
+// v2.0.0：组件改为 `import { core } from '@core'`，测试用 tests/ui/stub-core.js 顶上这个别名；
+// 替身读的是 Node 的 globalThis.__uiCore（bundle 在 Node 里执行），这里把同一份桩暴露出去。
+global.__uiCore = w.shiyue;
 const layoutStub = { collapsedGroups: [], sections: {} };
 
 /* 卡片视图（P3b）：复刻 app.js 的 loadPage 语义（数据归共享 state，UI 靠 __cardsTick 重绘） */
@@ -682,10 +685,10 @@ const withEFP = (el, fn) => {
       if (indexHtml.indexOf('id="' + id + '"') < 0) throw new Error('缺 #' + id);
     }
   });
-  t('index.html：入口脚本各引用一次', () => {
+  t('index.html：仅剩 Vite 模块入口（/app.js 已退役）', () => {
     const appRefs = (indexHtml.match(/src="\/app\.js"/g) || []).length;
     const modRefs = (indexHtml.match(/src="\/src\/main\.jsx"/g) || []).length;
-    if (appRefs !== 1) throw new Error('/app.js 引用 ' + appRefs + ' 次');
+    if (appRefs !== 0) throw new Error('public/app.js 应已退役，仍被引用 ' + appRefs + ' 次');
     if (modRefs !== 1) throw new Error('/src/main.jsx 引用 ' + modRefs + ' 次');
   });
 
@@ -2061,9 +2064,9 @@ const withEFP = (el, fn) => {
     });
   }
 
-  // ============ 冒烟：index.html + app.js 顶层加载无异常 ============
-  // 背景：v1.9.0 迁移阅读页时桥里写了 `readerToggleArt`（函数名却是 toggleReaderArt），
-  // app.js 顶层抛 ReferenceError → 整页 JS 中断、window.shiyue 未建立。这条冒烟专治此类。
+  // ============ 冒烟：真实核心模块（src/core/app.js）顶层加载无异常 ============
+  // 背景：v1.9.0 曾因桥里引用了不存在的标识符，顶层抛 ReferenceError → 整页 JS 中断
+  // （node --check 查不出）。本用例在 jsdom 里真实执行核心模块的顶层代码 + init()。
   {
     const vc2 = new VirtualConsole();
     const errs = [];
@@ -2073,9 +2076,9 @@ const withEFP = (el, fn) => {
       if (!/Not implemented: Window's scrollTo/.test(m)) errs.push(m);
     });
     let smokeHtml = fs.readFileSync(path.join(__dirname, '..', '..', 'index.html'), 'utf8');
-    const smokeApp = fs.readFileSync(path.join(__dirname, '..', '..', 'public', 'app.js'), 'utf8').replace(/<\/script/gi, '<\\/script');
-    smokeHtml = smokeHtml.replace(/<script type="module"[^>]*><\/script>/g, '');
-    smokeHtml = smokeHtml.replace(/<script src="\/app\.js"><\/script>/, () => '<script>' + smokeApp + '</script>');
+    const coreIife = fs.readFileSync(path.join(__dirname, '.build', 'core-iife.js'), 'utf8')
+      .replace(/<\/script/gi, '<\\/script');
+    smokeHtml = smokeHtml.replace(/<script type="module"[^>]*><\/script>/, () => '<script>' + coreIife + '</script>');
     const dom2 = new JSDOM(smokeHtml, {
       url: 'http://localhost:3000/',
       runScripts: 'dangerously',
@@ -2090,20 +2093,22 @@ const withEFP = (el, fn) => {
     });
     const sw = dom2.window;
     await sleep(80);
-    t('冒烟：app.js 顶层加载无异常 + 桥已建立', () => {
+    t('冒烟：核心模块顶层加载无异常 + core 已导出', () => {
       if (errs.length) throw new Error(errs[0]);
-      if (!sw.shiyue) throw new Error('window.shiyue 未建立');
+      if (!sw.__coreForTest) throw new Error('core 未导出');
     });
-    t('冒烟：桥的阅读页 / 卡片 / AI 函数齐全', () => {
-      const s2 = sw.shiyue;
+    t('冒烟：core 的视图 / 卡片 / AI / 外壳接口齐全', () => {
+      const c2 = sw.__coreForTest;
       const need = [
+        'state', 'switchView', 'loadFeeds', 'loadPage', 'refresh', 'cycleTheme', 'getShell',
         'readerSetScope', 'readerSetFeed', 'readerSetGroup', 'readerOpenSource', 'readerSearch',
         'readerToggleArt', 'readerCollapseAll', 'readerReadAll', 'readerToggleFav', 'readerTagToCards',
         'readerToggleAccordion', 'readerAccordionOn', 'readerToggleDrawer', 'readerCloseDrawer', 'fmtFull',
-        'cardsSearch', 'cardsView', 'filterEntries', 'getAiPage', 'promptInstall',
-        'getShell', 'refresh', 'cycleTheme', 'switchView',
+        'cardsSearch', 'cardsFilterFeed', 'cardsSort', 'cardsSize', 'cardsView', 'cardsTag',
+        'cardsLoadMore', 'cardsSetFlag', 'filterEntries', 'getAiPage', 'setAiPage', 'promptInstall',
+        'openSettings', 'toast', 'apiFetch', 'isAdmin', 'exportOpml', 'bindSections', 'groupFeeds',
       ];
-      for (const k of need) if (typeof s2[k] !== 'function') throw new Error('缺桥函数 ' + k);
+      for (const k of need) if (c2[k] === undefined) throw new Error('core 缺 ' + k);
     });
     sw.close();
   }

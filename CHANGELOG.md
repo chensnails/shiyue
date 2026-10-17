@@ -18,6 +18,29 @@
 
 ---
 
+## [2.0.0] — 2026-10-17
+
+> **MAJOR：前端架构收口。** 渐进式 React 迁移完成——不再有并行的经典脚本，也不再依赖 `window` 全局桥。
+
+变更（破坏性）：
+
+- **核心逻辑迁入 Vite 模块图**：原 `public/app.js` 整体迁为 `src/core/app.js`（ES 模块），末尾 `export const core = {…}`；`src/core/index.js` 再导出。`vite.config.mjs` 新增 `resolve.alias { '@core': src/core/index.js }`，全部组件改为 `import { core } from '@core'`，不再读写 `window.shiyue`。
+- **`window.shiyue` 桥拆除**：`window` 上不再挂任何应用桥；组件与核心之间是普通模块引用。
+- **`public/app.js` 退役**：文件删除，`index.html` 只保留唯一的 `<script type="module" src="/src/main.jsx">` 入口（`main.jsx` 先 `import '@core'` 初始化核心，再挂载各组件）。
+- **Service Worker**：预缓存移除 `/app.js`，`VERSION` 升到 `shiyue-v2`（旧缓存随 `activate` 清理）。
+
+保持不变：
+
+- 视觉、类名、DOM 挂载点与交互零变化：核心仍以「共享状态 + 窗口事件（`__cardsTick` / `__readerTick` / `__shellTick` / `__viewChanged` / `__appearanceChanged`）」驱动 React 视图重绘，两种协作范式（自持状态 / 共享状态 + tick）沿用。
+- `toast` / 新内容浮标（`#newPill`）/ 图片灯箱（`#lightbox`）仍是 `index.html` 里的指令式外挂，由 `core` 直接操作 DOM（转瞬即逝的提示与全屏遮罩用命令式更直接）。
+- 服务端 / 数据库无改动。
+
+验证：
+
+- UI 回归 **195/195**：组件通过 `@core` 别名指向 `tests/ui/stub-core.js`（读 Node 的 `globalThis.__uiCore`，即测试那份桩）被完全接管；冒烟用例改为在 jsdom 里真实执行打包后的核心模块（`core-entry.js` → `.build/core-iife.js`），断言顶层无异常且 `core` 接口齐全。
+- 真实产物端到端自检（jsdom 内联 `dist` bundle + `index.html`）：无报错，7 个挂载点全部渲染，`window.shiyue === undefined`。
+- `npm run build`：44 模块，`index-*.js` 369.63 kB（gzip 115.48 kB）；`dist/` 内已无 `app.js`。
+
 ## [1.10.1] — 2026-10-17
 
 移除：

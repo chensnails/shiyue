@@ -1,10 +1,10 @@
 /* App Shell：顶栏（品牌 / 视图导航 / 条资源统计 / 刷新 / 添加到手机 / 主题 / 设置）
  * 与顶部阅读进度条。
  *
- * P4a 起 React 化：这两块 DOM 由本模块渲染，旧 `public/app.js` 不再直接操作。
- *   - 数据经 `window.shiyue.getShell()` 读取（一次性快照），app.js 需要刷新时派发
- *     `window.__shellTick`，组件监听后重读快照重绘；
- *   - 交互回桥：`switchView` / `refresh` / `cycleTheme` / `openSettings` / `promptInstall`；
+ * P4a 起 React 化：这两块 DOM 由本模块渲染，核心逻辑不再直接操作它们。
+ *   - 数据经核心单例 `core.getShell()` 读取（一次性快照），核心派发 `window.__shellTick`
+ *     时组件重读快照重绘；
+ *   - 交互经 `core`：`switchView` / `refresh` / `cycleTheme` / `openSettings` / `promptInstall`；
  *   - 「顶栏高度 → CSS 变量 --topbar-h」（阅读页头部吸顶需要）也在此维护，用 ResizeObserver
  *     实测，覆盖字体加载完成 / 横竖屏切换等时机。
  *
@@ -12,6 +12,7 @@
  * 故本组件只渲染其内部内容，不能嵌套第二个 header；进度条必须留在 header 之外
  * （backdrop-filter 会成为 fixed 后代的包含块），挂到 `#shellRoot`。 */
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { core } from '@core';
 
 const VIEWS = [
   { id: 'reader', label: '文章' },
@@ -19,7 +20,7 @@ const VIEWS = [
   { id: 'ai', label: 'AI' },
 ];
 
-/** shell 快照的兜底（桥尚未建立 / 尚未就绪时） */
+/** shell 快照的兜底（核心尚未就绪时） */
 const EMPTY = {
   stat: '—', subtitle: '正在加载频道…', view: 'reader',
   themeLabel: '跟随系统', themeIco: 'theme-auto',
@@ -27,11 +28,7 @@ const EMPTY = {
 };
 
 function readShell() {
-  const s = window.shiyue;
-  if (s && typeof s.getShell === 'function') {
-    try { return Object.assign({}, EMPTY, s.getShell()); } catch (_) { /* 桥异常时用兜底 */ }
-  }
-  return EMPTY;
+  try { return Object.assign({}, EMPTY, core.getShell()); } catch (_) { return EMPTY; }
 }
 
 export function TopBar() {
@@ -65,13 +62,11 @@ export function TopBar() {
   }, []);
 
   const onRefresh = useCallback(async () => {
-    const s = window.shiyue;
-    if (!s || typeof s.refresh !== 'function') return;
     setBusy(true);
-    try { await s.refresh(); } finally { setBusy(false); }
+    try { await core.refresh(); } finally { setBusy(false); }
   }, []);
 
-  const s = window.shiyue || {};
+  const s = core;
   return (
     <div className="wrap topbar-inner" ref={rootRef}>
       <div className="brand">

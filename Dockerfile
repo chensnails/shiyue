@@ -12,7 +12,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 # 构建输入：Vite 配置、两个入口 HTML、React 源码、public/ 静态资源
-# （style.css / app.js / sw.js / 图标经 publicDir 原样拷入 dist）
+# （style.css / sw.js / 图标经 publicDir 原样拷入 dist）
 COPY vite.config.mjs index.html login.html ./
 COPY src ./src
 COPY public ./public

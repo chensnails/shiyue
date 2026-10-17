@@ -1,4 +1,13 @@
-'use strict';
+/* 拾阅核心逻辑（原 public/app.js，v2.0.0 起迁入 Vite 模块图）。
+ *
+ * 这里是视图 / 外壳 / 设置面板共用的「引擎」：全局 state、数据加载（feeds / entries /
+ * reader）、偏好（layout / appearance / theme）、自动刷新、键盘导航、抽屉手势，
+ * 以及少量指令式外挂（toast / 新内容浮标 / 灯箱）。
+ *
+ * 对外只暴露文件末尾的 `core` 单例（由 src/core/index.js 再导出，组件统一 `import { core } from '@core'`）。
+ * 视图只做渲染，控件经 core 改共享 state，core 派发 __cardsTick / __readerTick / __shellTick / __viewChanged
+ * 等窗口事件通知组件重绘。原先挂在 window 上的全局桥已在 v2.0.0 拆除。
+ * ============================================================ */
 
 /* ---------------- 常量 ----------------
  * 分页长度固定：卡片页 50 条，文章页 40 篇。
@@ -1623,7 +1632,7 @@ function prefersReducedMotion() {
    实现在 src/cmdk/CommandPalette.jsx，由 <script type="module" src="/src/main.jsx">
    挂载到 index.html 的 #cmdkRoot；旧 DOM（#cmdkMask 等）与 PINYIN 表已一并移除。
    下面的 selectScope / jumpToFeed / focusSearchBox 是普通页面函数，
-   通过文件末尾的 window.shiyue 桥供 React 组件调用。 */
+   通过文件末尾导出的 `core` 单例供 React 组件调用（v2.0.0 起改为模块引用）。 */
 
 function selectScope(scope) {
   if (state.tab !== 'reader') switchView('reader');
@@ -1758,20 +1767,20 @@ function shellSnapshot() {
 }
 
 /* ============================================================
- * window.shiyue 桥（混合期临时方案）
+ * 对外接口：`core` 单例
  * ------------------------------------------------------------
- * React 组件（如命令面板）通过这个对象读取 / 操作旧 app 的能力：
- *   state            全局状态对象（原地修改，实时引用，feedList 等直接读）
+ * 视图 / 外壳 / 设置面板统一 `import { core } from '@core'` 后按需取用：
+ *   state            全局状态对象（原地修改，实时引用，feedList / rdEntries 等直接读）
  *   switchView / applyTheme / openSettings / selectScope / jumpToFeed
  *   focusSearchBox / exportOpml / shortFeedName / feedTitle
  *   prefersReducedMotion / THEME_MODES / THEME_META
- *   refresh / scrollTop    常用操作的小包装
- *   loadFeeds / loadPage / renderReaderChannels / scheduleAutoRefresh   （阅读页见 P3c）
- *   setLayout / setSettingsSummary / bindSections / groupFeeds   P2c 数据源面板
+ *   refresh / cycleTheme / scrollTop    常用操作的小包装
+ *   loadFeeds / loadPage / renderReaderChannels / scheduleAutoRefresh
+ *   setLayout / getShell / setSettingsSummary / bindSections / groupFeeds
+ *   cards* / reader* / filterEntries / copyText / openLinkMenu / fmtDate / fmtFull
  * 注意：必须在文件末尾建立，上游 const（THEME_MODES 等）此时已初始化。
- * 待视图与设置全部 React 化、旧 app.js 退役后，此桥一并拆除。
  * ============================================================ */
-window.shiyue = {
+export const core = {
   state,
   switchView, applyTheme, openSettings, selectScope, jumpToFeed,
   focusSearchBox, exportOpml, shortFeedName, feedTitle, prefersReducedMotion,

@@ -6,7 +6,7 @@
  * 注意：Service Worker 只在安全上下文（HTTPS 或 localhost）注册，
  *       所以必须通过 https 访问（或本机 localhost）才会生效。
  */
-const VERSION = 'shiyue-v1';
+const VERSION = 'shiyue-v2';   // v2.0.0：核心逻辑进 bundle，旧的 /app.js 预缓存作废
 const CACHE = `${VERSION}-static`;
 
 // 预缓存：应用外壳的静态资源（不含需要登录的接口数据）
@@ -14,7 +14,6 @@ const PRECACHE = [
   '/login.html',
   '/login.css',
   '/style.css',
-  '/app.js',
   '/manifest.json',
   '/favicon.svg',
   '/favicon.ico',

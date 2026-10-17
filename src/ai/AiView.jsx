@@ -10,9 +10,10 @@
  * - 类名 / ID / data 属性与旧 DOM 一致，样式零改动；设置页可折叠分组复用桥 bindSections。
  */
 
+import { core } from '@core';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
-const S = () => (typeof window !== 'undefined' ? window.shiyue : null);
+const S = () => core;   // 核心逻辑单例（@core，v2.0.0 起改为模块引用）
 const AI_PAGES = ['digest', 'settings'];
 
 const Icon = ({ n }) => (

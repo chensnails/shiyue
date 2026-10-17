@@ -1,7 +1,7 @@
 /* 设置弹层「数据源」面板（v1.5.0 起 React 化，原 index.html 内联 DOM + app.js 绑定迁移至此）。
  *
  * 混合期约定（与模型 / 外观 / 关于面板一致）：
- * - 频道数据以旧 app 的 state 为单一数据源：组件每次渲染实时读 window.shiyue.state
+ * - 频道数据以 core.state 为单一数据源：组件每次渲染实时读 core.state
  *   （feedList / feedMeta / groupOrder 均原地修改、实时引用），原地改动后 bump tick
  *   触发重绘；服务端往返（增 / 删 / 改）统一走桥 loadFeeds() 刷新共享 state 再 bump。
  * - 采集参数（管理员专属）：进入面板拉 /api/config 回填；cfgLoaded 复刻旧 srcFormReady
@@ -21,9 +21,10 @@
  * - 增删频道后不再重复请求 /api/config（旧实现每次 add/delete 都重拉一遍全局配置）。
  */
 
+import { core } from '@core';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
-const S = () => (typeof window !== 'undefined' ? window.shiyue : null);
+const S = () => core;   // 核心逻辑单例（@core，v2.0.0 起改为模块引用）
 
 /* ---------- 选项表（与旧 index.html / app.js 逐字对齐） ---------- */
 // 每频道频率：比全局「自动抓取」多了 15 分钟 / 2 小时两档

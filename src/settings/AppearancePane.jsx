@@ -7,9 +7,10 @@
  *   外部改动（顶栏主题按钮、恢复默认、迁移）经 window.__appearanceChanged 事件回流同步。
  * 类名 / data 属性 / aria 与旧 DOM 完全一致，样式零改动。 */
 
+import { core } from '@core';
 import React, { useEffect, useState } from 'react';
 
-const S = () => (typeof window !== 'undefined' ? window.shiyue : null);
+const S = () => core;   // 核心逻辑单例（@core，v2.0.0 起改为模块引用）
 
 // 分段控件行：key 为外观偏好键，attr 即旧控件上标值的 data 属性名，options 与旧 HTML 一一对应
 const SEG_ROWS = [

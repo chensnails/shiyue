@@ -8,6 +8,7 @@
  * - 旧 app.js 的 openSettings/closeSettings 委托给本组件注册的宿主。
  */
 
+import { core } from '@core';
 import React, { useEffect, useState } from 'react';
 import { AboutPane } from './AboutPane.jsx';
 import { AppearancePane } from './AppearancePane.jsx';
@@ -27,7 +28,7 @@ const TABS = [
 // 管理员专属 tab（与管理端约定一致；模型配置每用户独立，普通用户也能配）
 const ADMIN_TABS = ['status'];
 
-const S = () => (typeof window !== 'undefined' ? window.shiyue : null);
+const S = () => core;   // 核心逻辑单例（@core，v2.0.0 起改为模块引用）
 const isAdminNow = () => !!(S() && S().isAdmin && S().isAdmin());
 
 export function SettingsModal() {

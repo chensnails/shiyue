@@ -3,8 +3,9 @@
  * 目前挂 App Shell 顶栏与进度条（#topbarRoot / #shellRoot）、命令面板（#cmdkRoot）、
  * 设置弹层（#settingsRoot）、AI 视图（#aiRoot）、卡片视图（#cardsRoot）、文章视图（#readerRoot）
  * —— 三大视图与顶栏全部 React 化。
- * window.shiyue 桥由旧 app.js 在脚本执行时建立，本模块只消费。 */
+ * 核心逻辑（原 public/app.js）已迁入 src/core/app.js，经 @core 别名共享为单例。 */
 
+import '@core';   // 初始化核心逻辑（原 public/app.js）：首屏主题/视图、事件绑定、init()
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { CommandPalette } from './cmdk/CommandPalette.jsx';
