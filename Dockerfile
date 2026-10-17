@@ -21,14 +21,18 @@ RUN npm run build
 
 # ---------------------------------------------------------------
 # 阶段二：运行时（复用此前单阶段镜像的时区 / 健康检查配置）
+# 基础镜像用 Debian（bookworm-slim）而非 Alpine：图片压缩依赖 sharp（原生 libvips），
+# 其预编译二进制基于 glibc，在 Alpine(musl) 上加载会失败，Debian 上开箱即用。
 # ---------------------------------------------------------------
-FROM node:22-alpine
+FROM node:22-bookworm-slim
 
 # 时区数据：定时摘要按 Asia/Shanghai 计算，日志时间也需要
 # 注意：tzdata 不能删，否则 /usr/share/zoneinfo 丢失，TZ 无法解析会回落到 UTC
-RUN apk add --no-cache tzdata \
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends tzdata \
  && ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
- && echo "Asia/Shanghai" > /etc/timezone
+ && echo "Asia/Shanghai" > /etc/timezone \
+ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

@@ -18,7 +18,8 @@ const { getDispatcher: getProxyDispatcher } = require('./proxy');
 const createDigest = require('./digest');
 const pkg = require('./package.json');
 // 纯函数已抽到 lib/（v2.2.0）：无副作用、可直接单测，见 tests/server/
-const { int, bool, clampInt, clampNum, normUrl, compareVersion, isPrivateHost, groupsOf } = require('./lib/util');
+const { int, bool, clampInt, clampNum, normUrl, compareVersion, isPrivateHost, groupsOf, imageCacheKey, groupByUrl } = require('./lib/util');
+const { compressImage, MAX_BYTES: IMG_MAX_BYTES } = require('./lib/image');
 const { parseOpml } = require('./lib/opml');
 const { sanitizeAppearance, userAppearance, sanitizeLayout, userLayout } = require('./lib/prefs');
 const { toCard, toFeedDto } = require('./lib/dto');
@@ -259,69 +260,81 @@ function noteLoginFail(ip) {
 /* ============================================================
  * 抓取
  * ============================================================ */
-const refreshing = new Set();   // 正在抓取的 feed id，避免并发重复抓
 // 状态页要展示的最近一次抓取快照；results 是逐个频道的结果明细
 let lastRefresh = {
   at: 0, startedAt: 0, durationMs: 0,
   results: [], added: 0, pruned: 0, skipped: 0, failed: 0,
 };
+let lastImagePrune = 0;   // 上次清理图片缓存的时间戳（限频每天一次）
 
-/** 抓单个频道。
+/** 抓取去重 / 节流。
  *
- * 两层去重 / 节流：
- *  1. refreshing Set：同一频道**正在抓**的请求直接返回 skipped（并发去重）
- *  2. recentFetch Map：同一频道**刚抓完 < 5s** 的请求直接跳过（防连点"刷新全部"打爆源站）
+ * 两层去重：
+ *  1. inFlightUrl：同一 URL **正在抓**的请求合并成同一个 Promise（跨用户 / 跨「手动+定时」并发去重）
+ *  2. recentFetchMs：同一 URL **刚抓完 < 5s** 的请求直接跳过（防连点"刷新全部"打爆源站）
  *
- * 抓取失败由 rss.fetchFeed 内部按指数退避重试 3 次；仍失败才在这里记 error。
- *
- * 注意：没做"同 URL 跨 feed 共享 Promise"那种去重 —— 同一 URL 被多个 feed 引用时，
- * 共享 promise 只会把条目写到先到那个 feed 的库里，另一个 feed 看似刷新了但条目没存，
- * 比多发一次 HTTP 麻烦得多。如果将来真的撞了同 URL，再单独设计。
+ * 多用户订阅同一频道 → 归到同一组，只回源一次，结果写回组内每个 feed 行
+ * （entries 仍按 feed 各存一份，用户隔离性不变）。抓取失败由 rss 内部指数退避重试 3 次。
  */
-const recentFetchMs = new Map();   // feedId -> 上次抓取完成时间
+const recentFetchMs = new Map();   // url(归一化) -> 上次抓取完成时间
+const inFlightUrl = new Map();     // url(归一化) -> 进行中的抓取 Promise（并发合并）
 const REFRESH_MIN_INTERVAL_MS = 5000;
 
-async function refreshFeed(feed) {
-  // 1) 同一频道并发去重
-  if (refreshing.has(feed.id)) return { feedId: feed.id, skipped: true };
-  // 2) 刚抓完 5 秒内不重复（成功 / 失败都算）
-  const last = recentFetchMs.get(feed.id);
-  if (last && Date.now() - last < REFRESH_MIN_INTERVAL_MS) {
-    return { feedId: feed.id, skipped: 'too-recent' };
-  }
-  return doRefresh(feed);
+/** 抓一组「订阅了同一 URL」的频道：只回源一次，结果写回组内每个 feed 行 */
+async function refreshGroup(key, members) {
+  const existing = inFlightUrl.get(key);
+  if (existing) return existing;                       // 并发合并：复用正在进行的那次抓取
+  const p = doRefreshGroup(key, members).finally(() => inFlightUrl.delete(key));
+  inFlightUrl.set(key, p);
+  return p;
 }
 
-async function doRefresh(feed) {
-  refreshing.add(feed.id);
+async function doRefreshGroup(key, members) {
+  // 5s 内刚抓过这个 URL → 跳过（防连点刷新打爆源站）
+  const last = recentFetchMs.get(key);
+  if (last && Date.now() - last < REFRESH_MIN_INTERVAL_MS) {
+    return { url: key, skipped: 'too-recent', feeds: members.length };
+  }
+  // 用「最近抓过」的那个成员的 etag/last_modified 打条件请求（命中 304 概率最高）
+  const src = members
+    .filter((m) => m.etag || m.last_modified)
+    .sort((a, b) => new Date(b.last_fetched_at || 0) - new Date(a.last_fetched_at || 0))[0] || members[0];
+  const fetchUrl = members[0].url;   // 用原始 URL 抓，避免小写路径在某些源站 404
   try {
-    const r = await rss.loadFeed(feed.url, {
-      etag: feed.etag,
-      lastModified: feed.last_modified,
+    const r = await rss.loadFeed(fetchUrl, {
+      etag: src.etag,
+      lastModified: src.last_modified,
       timeoutMs: settings.source.timeoutSeconds * 1000,
       proxyUrl: settings.source.proxyUrl,
     });
 
     if (r.notModified) {
-      await db.saveFeedMeta(feed.id, { status: 'ok', error: null });
-      return { feedId: feed.id, notModified: true, added: 0, total: 0 };
+      await Promise.all(members.map((m) => db.saveFeedMeta(m.id, { status: 'ok', error: null }).catch(() => {})));
+      return { url: key, notModified: true, added: 0, total: 0, feeds: members.length };
     }
 
-    const added = await db.upsertEntries(feed.id, r.items);
-    await db.saveFeedMeta(feed.id, {
-      title: r.title, siteUrl: r.siteUrl, description: r.description, iconUrl: r.iconUrl,
-      etag: r.etag, lastModified: r.lastModified, status: 'ok', error: null,
-    });
-    return { feedId: feed.id, notModified: false, added, total: r.items.length, title: r.title };
+    // 同一份解析结果写回组内每个 feed（只读 items，可安全复用）
+    let added = 0;
+    await Promise.all(members.map(async (m) => {
+      added += await db.upsertEntries(m.id, r.items);
+      await db.saveFeedMeta(m.id, {
+        title: r.title, siteUrl: r.siteUrl, description: r.description, iconUrl: r.iconUrl,
+        etag: r.etag, lastModified: r.lastModified, status: 'ok', error: null,
+      }).catch(() => {});
+    }));
+    return { url: key, notModified: false, added, total: r.items.length, feeds: members.length };
   } catch (e) {
     const msg = String((e && e.message) || e).slice(0, 300);
-    await db.saveFeedMeta(feed.id, { status: 'error', error: msg }).catch(() => {});
-    return { feedId: feed.id, error: msg };
+    await Promise.all(members.map((m) => db.saveFeedMeta(m.id, { status: 'error', error: msg }).catch(() => {})));
+    return { url: key, error: msg, feeds: members.length };
   } finally {
-    refreshing.delete(feed.id);
-    // 无论成功失败都记"刚抓完"时间，避免源站被连点刷新打爆
-    recentFetchMs.set(feed.id, Date.now());
+    recentFetchMs.set(key, Date.now());   // 无论成败都记时间，避免源站被连点打爆
   }
+}
+
+/** 抓单个频道（供路由手动刷新单个用）；与批量刷新共享按 URL 的去重 */
+async function refreshFeed(feed) {
+  return refreshGroup(normUrl(feed.url), [feed]);
 }
 
 /** 这个频道该隔多久抓一次：频道自己设了就用它，否则跟随全局设置 */
@@ -345,37 +358,47 @@ function dueFeeds(all, now = Date.now()) {
 /**
  * 并发抓一批频道，抓完做清理并记下快照。
  * 「手动刷新全部」和「定时 tick」都走这里，区别只在传入的 feeds 不同。
+ * 内部先按 URL 分组：同一 URL 的多个订阅（跨用户）合并成一次回源。
  */
 async function refreshFeeds(feeds, { concurrency, total, startedAt = Date.now(), label = '抓取' } = {}) {
+  const groups = groupByUrl(feeds);          // Map<url, feed[]>
+  const entries = [...groups.entries()];
   const limit = clampInt(concurrency, settings.source.concurrency, 1, 10);
   const results = [];
   let cursor = 0;
   const worker = async () => {
-    while (cursor < feeds.length) {
-      const f = feeds[cursor++];
-      results.push(await refreshFeed(f));
+    while (cursor < entries.length) {
+      const [key, members] = entries[cursor++];
+      results.push(await refreshGroup(key, members));
     }
   };
-  await Promise.all(Array.from({ length: Math.min(limit, feeds.length || 1) }, worker));
+  await Promise.all(Array.from({ length: Math.min(limit, entries.length || 1) }, worker));
 
   // 两个上限是「并且」关系：条数上限 + 时间上限（keepDays = 0 表示不限时间）
   const prunedByCount = await db.pruneEntries(settings.source.keepPerFeed).catch(() => 0);
   const prunedByAge = await db.pruneEntriesByAge(settings.source.keepDays).catch(() => 0);
+  // 图片缓存日常清理（默认 90 天），限频为每天至多一次
+  let prunedImg = 0;
+  if (Date.now() - lastImagePrune > 24 * 3600 * 1000) {
+    lastImagePrune = Date.now();
+    prunedImg = await db.pruneImageCache(Number(process.env.IMG_CACHE_TTL_DAYS || 90)).catch(() => 0);
+  }
   const added = results.reduce((n, r) => n + (r.added || 0), 0);
   const failed = results.filter((r) => r.error).length;
   const skipped = total == null ? 0 : Math.max(0, total - feeds.length);
   lastRefresh = {
     at: Date.now(), startedAt, durationMs: Date.now() - startedAt,
-    results, added, pruned: prunedByCount + prunedByAge, prunedByAge, skipped, failed,
+    results, added, pruned: prunedByCount + prunedByAge + prunedImg, prunedByAge, prunedImg, skipped, failed,
   };
-  log(`[rss] ${label}完成：${feeds.length} 个频道，新增 ${added} 条`
+  log(`[rss] ${label}完成：${entries.length} 个 URL 组 / ${feeds.length} 个订阅，新增 ${added} 条`
     + (skipped ? `，跳过 ${skipped} 个（未开启采集或未到期）` : '')
     + (failed ? `，失败 ${failed} 个` : '')
     + (prunedByCount ? `，按条数清理 ${prunedByCount} 条` : '')
-    + (prunedByAge ? `，按时间清理 ${prunedByAge} 条` : ''));
+    + (prunedByAge ? `，按时间清理 ${prunedByAge} 条` : '')
+    + (prunedImg ? `，图片缓存清理 ${prunedImg} 张` : ''));
   return {
     at: lastRefresh.at, results, added, failed, skipped,
-    pruned: lastRefresh.pruned, prunedByAge,
+    pruned: lastRefresh.pruned, prunedByAge, prunedImg,
   };
 }
 
@@ -415,11 +438,63 @@ function scheduleRefresh() {
 /* ============================================================
  * 图片代理（RSS 里的图直接由后端取，绕开防盗链与混合内容）
  * ============================================================ */
-// 6 小时内存缓存：同一张图反复出现在多篇文章里时不必每次都出网。
-// ⚠️ 这两个标识符是被 proxyImage 闭包持有的**运行时状态**（不是纯函数），
-// 所以它留在 server.js，不能跟着纯函数一起搬进 lib/。
-const IMG_CACHE_TTL = 6 * 3600 * 1000;
+// 图片永久缓存（L1 内存 + L2 数据库 image_cache 表）：
+//   - L1：内存 Map，加速热图（重启即失，仅作缓存层）
+//   - L2：落库，和文章一样持久化；首请求回源→压缩→存库，之后命中直接出，不再碰上游
+//   - 过期回源（stale-while-revalidate，默认 7 天）：超过窗口仍先返回旧图，后台静默刷新，
+//     兼顾「避免重复请求」与「头像/配图换了别永远陈旧」
+// ⚠️ imgCache 是 proxyImage 闭包持有的运行时状态（非纯函数），留在 server.js。
+const IMG_CACHE_TTL = Number(process.env.IMG_CACHE_TTL_DAYS || 7) * 86400000;
+const IMG_L1_MAX = 500;
 const imgCache = new Map();
+
+function serveImage(res, type, buf) {
+  res.writeHead(200, {
+    'Content-Type': type, 'Content-Length': buf.length,
+    'Cache-Control': 'public, max-age=86400',
+  });
+  res.end(buf);
+}
+function cacheL1(key, type, buf) {
+  imgCache.set(key, { type, buf });
+  if (imgCache.size > IMG_L1_MAX) imgCache.delete(imgCache.keys().next().value);
+}
+
+/** 回源抓取 + 压缩 + 落库（L2）+ 写 L1，返回 { type, buf }；失败抛带 status 的错误 */
+async function fetchAndCache(key, url) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 15000);
+  try {
+    const resp = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Shiyue/2.0)' },
+      signal: ctl.signal,
+      redirect: 'follow',
+      dispatcher: getProxyDispatcher(settings && settings.source && settings.source.proxyUrl) || undefined,
+    });
+    // 上游明确应答了 4xx/5xx → 透传状态码，别伪装成 502 网关错误。
+    // 否则排查时看到 502 会误以为是代理/缓存坏了（v2.2.1 的教训），其实只是图片源自己 404/403。
+    if (!resp.ok) throw Object.assign(new Error('upstream ' + resp.status), { status: resp.status });
+    const type = resp.headers.get('content-type') || 'image/jpeg';
+    if (!/^image\//i.test(type)) throw Object.assign(new Error('not an image'), { status: 502 });
+    const raw = Buffer.from(await resp.arrayBuffer());
+    if (raw.length > IMG_MAX_BYTES) throw Object.assign(new Error('image too large'), { status: 502 });
+
+    // 压缩：栅格图→WebP；svg/ico 或不降反增的小图→原样存
+    const comp = await compressImage(raw, type);
+    const finalType = comp ? comp.contentType : type;
+    const finalBuf = comp ? comp.buf : raw;
+    try {
+      await db.setImageCache({
+        key, contentType: finalType, data: finalBuf,
+        width: comp ? comp.width : null, height: comp ? comp.height : null, origSize: raw.length,
+      });
+    } catch (_) { /* 落库失败不致命，L1 已可用 */ }
+    cacheL1(key, finalType, finalBuf);
+    return { type: finalType, buf: finalBuf };
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 async function proxyImage(rawUrl, res) {
   let target;
@@ -439,46 +514,34 @@ async function proxyImage(rawUrl, res) {
     return;
   }
 
-  const key = target.toString();
-  const hit = imgCache.get(key);
-  if (hit && Date.now() - hit.t < IMG_CACHE_TTL) {
-    res.writeHead(200, {
-      'Content-Type': hit.type, 'Content-Length': hit.buf.length,
-      'Cache-Control': 'public, max-age=86400, immutable',
-    });
-    res.end(hit.buf);
+  const key = imageCacheKey(target.toString());
+
+  // L1 内存命中：直接出
+  const l1 = imgCache.get(key);
+  if (l1) { serveImage(res, l1.type, l1.buf); return; }
+
+  // L2 数据库命中
+  let l2 = null;
+  try { l2 = await db.getImageCache(key); } catch (_) { /* 库不可用时不致命 */ }
+  if (l2) {
+    cacheL1(key, l2.contentType, l2.data);
+    if (Date.now() - new Date(l2.createdAt).getTime() < IMG_CACHE_TTL) {
+      serveImage(res, l2.contentType, l2.data);   // 新鲜：直接出
+      return;
+    }
+    // 过期：先返回旧图（stale），后台静默回源刷新
+    serveImage(res, l2.contentType, l2.data);
+    fetchAndCache(key, target.toString()).catch(() => {});
     return;
   }
 
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 15000);
+  // 未命中：同步回源 + 压缩 + 落库
   try {
-    const resp = await fetch(key, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Shiyue/2.0)' },
-      signal: ctl.signal,
-      redirect: 'follow',
-      dispatcher: getProxyDispatcher(settings && settings.source && settings.source.proxyUrl) || undefined,
-    });
-    // 上游明确应答了 4xx/5xx → 透传状态码，别伪装成 502 网关错误。
-    // 否则排查时看到 502 会误以为是代理/缓存坏了（v2.2.1 的教训），其实只是图片源自己 404/403。
-    if (!resp.ok) { res.writeHead(resp.status, { 'Content-Type': 'text/plain' }).end('upstream ' + resp.status); return; }
-    const type = resp.headers.get('content-type') || 'image/jpeg';
-    if (!/^image\//i.test(type)) { res.writeHead(502).end('not an image'); return; }
-    const buf = Buffer.from(await resp.arrayBuffer());
-    if (buf.length > 8 * 1024 * 1024) { res.writeHead(502).end('image too large'); return; }
-
-    imgCache.set(key, { t: Date.now(), type, buf });
-    if (imgCache.size > 400) imgCache.delete(imgCache.keys().next().value);
-
-    res.writeHead(200, {
-      'Content-Type': type, 'Content-Length': buf.length,
-      'Cache-Control': 'public, max-age=86400, immutable',
-    });
-    res.end(buf);
+    const r = await fetchAndCache(key, target.toString());
+    serveImage(res, r.type, r.buf);
   } catch (e) {
-    res.writeHead(504, { 'Content-Type': 'text/plain' }).end('image fetch failed');
-  } finally {
-    clearTimeout(timer);
+    const st = e && e.status ? e.status : 504;
+    res.writeHead(st, { 'Content-Type': 'text/plain' }).end(st === 504 ? 'image fetch failed' : 'upstream ' + st);
   }
 }
 
@@ -1513,7 +1576,7 @@ async function buildStatus() {
       lastRefreshAt: lastRefresh.at || null,
       nextRefreshAt,
       dueCount,
-      refreshing: refreshing.size,
+      inFlight: inFlightUrl.size,
       lastResult: lastRefresh.at ? {
         added: lastRefresh.added, pruned: lastRefresh.pruned,
         skipped: lastRefresh.skipped, failed: lastRefresh.failed,

@@ -94,6 +94,21 @@ CREATE TABLE IF NOT EXISTS digests (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (owner_id, date)
 );
+
+-- 图片永久缓存（与 articles 同库）：把压缩后的图片字节按 URL 哈希存下来，
+-- 避免重复回源上游（Telegram CDN 等）。L1 内存缓存加速热图，这里做持久层（L2）。
+-- key = sha256(归一化 URL)，data = 压缩后的 WebP 字节（栅格图）或原图字节（svg/ico 等不重编码的）。
+CREATE TABLE IF NOT EXISTS image_cache (
+  key          TEXT PRIMARY KEY,
+  content_type TEXT NOT NULL,
+  data         BYTEA NOT NULL,
+  width        INTEGER,
+  height       INTEGER,
+  orig_size    INTEGER,
+  size         INTEGER NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS image_cache_created_idx ON image_cache (created_at);
 `;
 
 // 索引单独执行：表建完再建，且 pg_trgm 缺失时只需跳过最后一条
@@ -786,6 +801,40 @@ module.exports = function createDb({ connectionString, log = console.log }) {
     return r.rowCount;
   }
 
+  /* ============================================================
+   * 图片永久缓存（image_cache 表）
+   * ============================================================ */
+  /** 取缓存图片；命中返回 { contentType, data(Buffer), createdAt }，未命中返回 null */
+  async function getImageCache(key) {
+    const r = await q('SELECT content_type, data, created_at FROM image_cache WHERE key = $1', [key]);
+    if (!r.rows[0]) return null;
+    const row = r.rows[0];
+    return { contentType: row.content_type, data: row.data, createdAt: row.created_at };
+  }
+
+  /** 写入/覆盖缓存图片（key = sha256 归一化 URL） */
+  async function setImageCache({ key, contentType, data, width, height, origSize }) {
+    await q(
+      `INSERT INTO image_cache (key, content_type, data, width, height, orig_size, size, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+       ON CONFLICT (key) DO UPDATE SET
+         content_type = EXCLUDED.content_type, data = EXCLUDED.data,
+         width = EXCLUDED.width, height = EXCLUDED.height,
+         orig_size = EXCLUDED.orig_size, size = EXCLUDED.size, created_at = now()`,
+      [key, contentType, data, width || null, height || null, origSize || null, data.length]
+    );
+  }
+
+  /** 清理超过 keepDays 天的缓存图片；返回删除行数 */
+  async function pruneImageCache(days) {
+    const keep = Math.max(1, Number(days) || 90);
+    const r = await q(
+      `DELETE FROM image_cache WHERE created_at < now() - ($1::int || ' days')::interval`,
+      [keep]
+    );
+    return r.rowCount || 0;
+  }
+
   return {
     pool, q, start, onReady, status, close, migrate,
     getSettings, setSetting, setSettings,
@@ -797,5 +846,6 @@ module.exports = function createDb({ connectionString, log = console.log }) {
     setEntryFlags, markEntriesRead, entryFlagCounts,
     tableCounts, entryWindow, ping,
     saveDigest, readDigest, listDigestDates, hasDigest, digestStatsAll, pruneDigests,
+    getImageCache, setImageCache, pruneImageCache,
   };
 };
