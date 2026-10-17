@@ -415,6 +415,12 @@ function scheduleRefresh() {
 /* ============================================================
  * 图片代理（RSS 里的图直接由后端取，绕开防盗链与混合内容）
  * ============================================================ */
+// 6 小时内存缓存：同一张图反复出现在多篇文章里时不必每次都出网。
+// ⚠️ 这两个标识符是被 proxyImage 闭包持有的**运行时状态**（不是纯函数），
+// 所以它留在 server.js，不能跟着纯函数一起搬进 lib/。
+const IMG_CACHE_TTL = 6 * 3600 * 1000;
+const imgCache = new Map();
+
 async function proxyImage(rawUrl, res) {
   let target;
   try { target = new URL(String(rawUrl || '')); } catch (_) {
