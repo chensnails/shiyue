@@ -855,7 +855,7 @@ const server = http.createServer(async (req, res) => {
         const r = await refreshFeeds(mine, { total: mine.length, label: '手动刷新' });
         json(res, 200, {
           ok: true, at: r.at, added: r.added, skipped: r.skipped || 0,
-          failed: r.results.filter((x) => x.error).map((x) => ({ feedId: String(x.feedId), error: x.error })),
+          failed: r.results.filter((x) => x.error).map((x) => ({ url: x.url, error: x.error })),
         });
         return;
       }
