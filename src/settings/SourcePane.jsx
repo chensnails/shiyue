@@ -26,6 +26,18 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 const S = () => core;   // 核心逻辑单例（@core，v2.0.0 起改为模块引用）
 
+/** 频道头像：图标加载失败（拉取 404 / 防盗链）时回退到首字母，避免破图标 */
+function FeedAvatar({ icon, name }) {
+  const [failed, setFailed] = useState(false);
+  if (!icon || failed) {
+    return <span className="feed-avatar feed-avatar-txt">{(name || '?').slice(0, 1)}</span>;
+  }
+  return (
+    <img className="feed-avatar" src={icon} alt="" loading="lazy"
+      onError={() => setFailed(true)} />
+  );
+}
+
 /* ---------- 选项表（与旧 index.html / app.js 逐字对齐） ---------- */
 // 每频道频率：比全局「自动抓取」多了 15 分钟 / 2 小时两档
 const FREQ_OPTIONS = [
@@ -693,9 +705,7 @@ export function SourcePane({ admin }) {
     // 该行有保存中的请求：禁用本行控件（复刻旧实现的逐控件 disabled，防重复提交）
     const pend = pendingIds.has(String(f.id));
     const name = s.shortFeedName(s.feedTitle(f));
-    const avatar = f.icon
-      ? <img className="feed-avatar" src={f.icon} alt="" loading="lazy" />
-      : <span className="feed-avatar feed-avatar-txt">{(name || '?').slice(0, 1)}</span>;
+    const avatar = <FeedAvatar icon={f.icon} name={name} />;
     return (
       <div
         key={f.id}

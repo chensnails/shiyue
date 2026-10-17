@@ -14,6 +14,18 @@ import React, { useEffect, useRef, useState } from 'react';
 
 const S = () => core;   // 核心逻辑单例（@core，v2.0.0 起改为模块引用）
 
+/** 频道头像：图标加载失败（拉取 404 / 防盗链）时回退到首字母，避免破图标 */
+function ChannelAvatar({ icon, name }) {
+  const [failed, setFailed] = useState(false);
+  if (!icon || failed) {
+    return <span className="rd-ch-avatar rd-ch-avatar-txt">{String(name || '?').slice(0, 1)}</span>;
+  }
+  return (
+    <img className="rd-ch-avatar" src={icon} alt="" loading="lazy"
+      onError={() => setFailed(true)} />
+  );
+}
+
 const Icon = ({ n }) => (
   <svg className="ico" aria-hidden="true" focusable="false"><use href={'#i-' + n} /></svg>
 );
@@ -290,9 +302,7 @@ function ReaderChannels({ feeds, flags, scope, feedId, group }) {
               return (
                 <button key={f.id} className={'rd-ch' + (f.enabled ? '' : ' off') + (active ? ' active' : '')}
                   type="button" data-feed={f.id} onClick={() => s.readerSetFeed(f.id)}>
-                  {f.icon
-                    ? <img className="rd-ch-avatar" src={f.icon} alt="" loading="lazy" />
-                    : <span className="rd-ch-avatar rd-ch-avatar-txt">{String(name || '?').slice(0, 1)}</span>}
+                  <ChannelAvatar icon={f.icon} name={name} />
                   <span className="rd-ch-name" title={tip || ''}>{name}</span>
                   {unread > 0 ? <span className="rd-ch-n hot" title={`${unread} 条未读 / 共 ${count} 条`}>{unread}</span> : null}
                 </button>

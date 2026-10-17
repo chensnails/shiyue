@@ -583,6 +583,21 @@ test('toFeedDto：两个开关独立 + 图标走代理', () => {
   assert.equal(d.sortOrder, 2);
 });
 
+test('toFeedDto：data: 内嵌图标原样返回，不走代理（v2.2.5 修复 400）', () => {
+  const d = toFeedDto({ id: 1, url: 'u', title: 'T', icon_url: 'data:image/svg+xml;base64,PHN2Zy8+' }, 30);
+  assert.equal(d.icon, 'data:image/svg+xml;base64,PHN2Zy8+');
+});
+
+test('toFeedDto：重复协议头归一化为单协议（v2.2.5 修复 504）', () => {
+  const d = toFeedDto({ id: 1, url: 'u', title: 'T', icon_url: 'https:https://cdn.v2ex.com/navatar/x.png' }, 30);
+  assert.equal(d.icon, '/api/img?u=' + encodeURIComponent('https://cdn.v2ex.com/navatar/x.png'));
+});
+
+test('toFeedDto：无图标时为 null', () => {
+  const d = toFeedDto({ id: 1, url: 'u', title: 'T' }, 30);
+  assert.equal(d.icon, null);
+});
+
 test('toFeedDto：从未抓取过时 nextRefreshAt 为 null（而不是 epoch）', () => {
   const d = toFeedDto({ id: 1, url: 'u', title: 'T', last_fetched_at: null }, 30);
   assert.equal(d.nextRefreshAt, null);

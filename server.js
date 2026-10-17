@@ -423,7 +423,14 @@ const imgCache = new Map();
 
 async function proxyImage(rawUrl, res) {
   let target;
-  try { target = new URL(String(rawUrl || '')); } catch (_) {
+  try {
+    let s = String(rawUrl || '').trim();
+    // 个别源把图标写成 https:https://... 这种重复协议头，先归一化，否则 new URL 解析出的
+    // 主机名是 "https:"，抓取必败（v2.2.5）。
+    s = s.replace(/^(https?):\1:\/\//i, '$1://');
+    if (/^data:/i.test(s)) { res.writeHead(400, { 'Content-Type': 'text/plain' }).end('data uri not proxied'); return; }
+    target = new URL(s);
+  } catch (_) {
     res.writeHead(400, { 'Content-Type': 'text/plain' }).end('bad url');
     return;
   }
