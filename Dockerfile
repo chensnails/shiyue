@@ -41,6 +41,8 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 COPY server.js db.js rss.js digest.js proxy.js ./
+# lib/：后端纯函数（v2.2.0 起 server.js 会 require ./lib/*，漏拷会在容器启动时报 MODULE_NOT_FOUND）
+COPY lib ./lib
 
 # 前端构建产物：打进镜像（不再挂载 public/，改前端必须重新 build）
 COPY --from=builder /app/dist ./dist

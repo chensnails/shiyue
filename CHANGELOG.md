@@ -18,6 +18,48 @@
 
 ---
 
+## [2.2.0] — 2026-10-17
+
+> 后端可测试性：把埋在 `server.js` 里的纯函数抽到 `lib/`，首次为后端建立自动化测试。运行时行为不变。
+
+### 为什么动后端
+
+`server.js` 有 1927 行、28 个路由，但**零测试** —— 更根本的问题是它 `require` 即 `listen` + `db.start()`，测试根本无法触及它内部的逻辑。里面藏着一批典型的高风险纯函数：`clampInt/clampNum` 的边界、`sanitizeAppearance/sanitizeLayout` 的用户输入清洗、`parseOpml` 的正则解析、`encryptSecret/decryptSecret` 的加解密往返、`isPrivateHost` 的 SSRF 拦截。这些恰好都是「改错一行就出事、但手点测不出来」的部分。
+
+### 变更
+
+- **新增 `lib/`**（无副作用、无外部依赖，可直接 `require`）：
+  | 模块 | 内容 |
+  |---|---|
+  | `lib/util.js` | `int` / `bool` / `clampInt` / `clampNum` / `normUrl` / `compareVersion` / `isPrivateHost` / `groupsOf` |
+  | `lib/opml.js` | `parseOpml` / `parseOpmlAttrs` |
+  | `lib/prefs.js` | `sanitizeAppearance` / `userAppearance` / `sanitizeLayout` / `userLayout` + 取值表 |
+  | `lib/dto.js` | `toCard` / `toFeedDto` / `proxyBodyJson` / `proxied` |
+  | `lib/crypto.js` | `encryptSecret` / `decryptSecret` / `maskSecret` / `hashPassword` / `safeEqual` |
+  | `lib/llm.js` | `llmForStore` / `sanitizeUserLlm` / `userLlmForStore` / `userLlmForView` / `resolveUserLlm` |
+- **去隐式全局改显式传参**：原先直接读模块级 `settings` 的函数改为由调用方传入 —— `toFeedDto(f, globalRefreshMinutes)`、`resolveUserLlm(user, siteLlm, cryptoSecret)`、`encryptSecret(plain, cryptoSecret)`、`*ForStore(x, cryptoSecret)`、`*ForView(prefs, cryptoSecret)`。这是让它们可测的前提。
+- `server.js` 净减约 12 KB，其余逻辑与接口**零变化**。
+
+### 测试
+
+- 新增 `tests/server/unit.test.js`（`node:test`，零依赖、零外部服务），**54 项全绿**。重点覆盖：
+  - `isPrivateHost`：`169.254.169.254`（云元数据）、各私有段、IPv6 一律拦下；`8.8.8.8` / `172.15/32` 等正确放行
+  - `encryptSecret` / `decryptSecret`：往返一致、**密钥漂移**返回空串、密文篡改返回空串、每次 iv 随机
+  - `sanitizeAppearance` / `sanitizeLayout`：白名单过滤、**原型污染尝试被丢弃**、`accordion` 只有显式 `false` 才关、`collapsedGroups` 截断到 40 字符、`sections` 强制布尔
+  - `parseOpml`：嵌套文件夹路径、自闭合空文件夹不污染后续、`text` 是 `title` 的回落、脏输入不抛
+  - `toCard` / `toFeedDto`：**所有外链图片必须改写为 `/api/img` 代理**、`own` 频率优先于全局、从未抓取时 `nextRefreshAt` 为 `null`
+  - `resolveUserLlm`：用户配置优先、未配逐字段回退站点、密文解不开时回退站点 Key
+  - `clampInt` / `clampNum`：上下界夹取、脏值回落、默认值超界也夹住
+- **Dockerfile 补 `COPY lib ./lib`** —— 这是本轮唯一的部署阻断项：原来只拷根目录 5 个 js，抽到 `lib/` 后镜像构建照样成功，但容器启动会 `MODULE_NOT_FOUND`。本地与普通 CI 都发现不了。
+- **新增 `tests/server/dockerfile-files.cjs`**：从 Dockerfile 解析最终镜像的 COPY 清单，按 `server.js` 的 require 图逐个核对。这类"构建通过但运行时崩"的坑从此在 CI 就暴露（已用「临时删掉 `COPY lib`」验证过该脚本确实会报错）。
+- `package.json` 新增 `test:server`（清单校验 + 单测）与 `test`（串跑前后端）；CI 增加「后端单测 + Dockerfile 清单校验」一步。
+
+### 顺带评估：index.html 静态骨架
+
+评估结论是**不再收敛**，理由已写进开发文档：`<head>` 的主题引导脚本必须阻塞内联（挪进 bundle 会造成首屏主题闪烁）；SVG sprite 内联对离线 / SW 最稳，外置会多一次请求；3 个视图容器的 `hidden` 切换理论可进组件，但那正是 v1.10.0 踩过 `display: contents` 网格塌陷的位置，为 6 行 HTML 冒布局回归风险不划算。
+
+---
+
 ## [2.1.0] — 2026-10-17
 
 > 架构整理：拆分核心单文件、接入 CI、覆盖层 React 化。对外接口零变更。

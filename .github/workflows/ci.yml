@@ -26,5 +26,9 @@ jobs:
       - name: UI 回归测试
         run: npm run test:ui
 
+      # 含 Dockerfile 文件清单校验：防止抽到 lib/ 后忘了 COPY，镜像构建成功但容器启动即崩
+      - name: 后端单测 + Dockerfile 清单校验
+        run: npm run test:server
+
       - name: 冒烟：Node 端可加载
         run: node --check server.js

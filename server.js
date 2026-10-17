@@ -17,6 +17,13 @@ const rss = require('./rss');
 const { getDispatcher: getProxyDispatcher } = require('./proxy');
 const createDigest = require('./digest');
 const pkg = require('./package.json');
+// 纯函数已抽到 lib/（v2.2.0）：无副作用、可直接单测，见 tests/server/
+const { int, bool, clampInt, clampNum, normUrl, compareVersion, isPrivateHost, groupsOf } = require('./lib/util');
+const { parseOpml } = require('./lib/opml');
+const { sanitizeAppearance, userAppearance, sanitizeLayout, userLayout } = require('./lib/prefs');
+const { toCard, toFeedDto } = require('./lib/dto');
+const { decryptSecret, maskSecret, hashPassword, safeEqual } = require('./lib/crypto');
+const { llmForStore, userLlmForStore, userLlmForView, resolveUserLlm } = require('./lib/llm');
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = '0.0.0.0';
@@ -46,16 +53,6 @@ const db = createDb({ connectionString: DATABASE_URL, log });
 /* ============================================================
  * 设置（落库，进程内缓存一份）
  * ============================================================ */
-function hashPassword(password, salt) {
-  return crypto.scryptSync(String(password), salt, 64).toString('hex');
-}
-function safeEqual(a, b) {
-  const ba = Buffer.from(String(a));
-  const bb = Buffer.from(String(b));
-  if (ba.length !== bb.length) return false;
-  return crypto.timingSafeEqual(ba, bb);
-}
-
 /* ============================================================
  * 敏感字段加密（模型 API Key 落库前加密）
  * 主密钥由 cryptoSecret 经 scrypt 派生，AES-256-GCM 加密。
@@ -63,137 +60,11 @@ function safeEqual(a, b) {
  * 它防的是「备份 / 日志 / 截图 / 误导出被拖走」时直接读到一枚可用的凭据，
  * 同时让接口不再回吐明文（前端只看到掩码）。
  * ============================================================ */
-const ENC_PREFIX = 'enc.v1.';
-const ENC_SALT = 'shiyue.secret.v1';
-
-function secretKey() {
-  return crypto.scryptSync(String((settings && settings.cryptoSecret) || ''), ENC_SALT, 32);
-}
-
-/** 明文 → "enc.v1.<iv>.<tag>.<密文>"（base64url）；空值返回空串 */
-function encryptSecret(plain) {
-  const text = String(plain == null ? '' : plain);
-  if (!text) return '';
-  try {
-    const iv = crypto.randomBytes(12);
-    const c = crypto.createCipheriv('aes-256-gcm', secretKey(), iv);
-    const body = Buffer.concat([c.update(text, 'utf8'), c.final()]);
-    return ENC_PREFIX + [
-      iv.toString('base64url'),
-      c.getAuthTag().toString('base64url'),
-      body.toString('base64url'),
-    ].join('.');
-  } catch (e) {
-    logErr('[crypto] 加密失败：' + ((e && e.message) || e));
-    return '';
-  }
-}
-
-/** 密文 → 明文；格式不对或密钥变过（认证失败）时返回空串 */
-function decryptSecret(enc) {
-  const s = String(enc == null ? '' : enc);
-  if (!s.startsWith(ENC_PREFIX)) return '';
-  const parts = s.slice(ENC_PREFIX.length).split('.');
-  if (parts.length !== 3 || parts.some((x) => !x)) return '';
-  try {
-    const d = crypto.createDecipheriv('aes-256-gcm', secretKey(), Buffer.from(parts[0], 'base64url'));
-    d.setAuthTag(Buffer.from(parts[1], 'base64url'));
-    return Buffer.concat([d.update(Buffer.from(parts[2], 'base64url')), d.final()]).toString('utf8');
-  } catch (e) {
-    logErr('[crypto] 解密失败（cryptoSecret 是否变过？）：' + ((e && e.message) || e));
-    return '';
-  }
-}
-
-/** 只露头尾：sk-ab••••••••wxyz。用于前端回显「已保存的是哪一枚」 */
-function maskSecret(s) {
-  const t = String(s || '');
-  if (!t) return '';
-  if (t.length <= 8) return '•'.repeat(t.length);
-  return t.slice(0, 3) + '•'.repeat(Math.min(12, t.length - 7)) + t.slice(-4);
-}
-
-/** llm 组的「落库形态」：内存里持有明文 apiKey，写库前必须换成 apiKeyEnc */
-function llmForStore(llm) {
-  const src = llm || {};
-  const out = Object.assign({}, src);
-  delete out.apiKey;
-  // 传了新的明文 Key 就重新加密；没传就沿用原有密文（万一解密失败也不会把 Key 抹掉）。
-  // 要「清除 Key」时显式传 apiKeyEnc: ''，那样这里会写成空串。
-  out.apiKeyEnc = src.apiKey ? encryptSecret(src.apiKey) : String(src.apiKeyEnc || '');
-  return out;
-}
-
 /* ============================================================
  * 每用户模型配置（与站点级 settings.llm 同构，但跟随账号生效）
  * 内存里持有明文 apiKey；落库前换 apiKeyEnc；前端只见「是否设置 + 掩码」。
  * 站点级 settings.llm 作为兜底 / 默认值：用户自己配了就用用户的，否则回退站点默认。
  * ============================================================ */
-
-/** 校验并夹取用户写入的 llm 字段（落库前） */
-function sanitizeUserLlm(raw) {
-  const out = {};
-  if (!raw || typeof raw !== 'object') return out;
-  out.baseUrl = typeof raw.baseUrl === 'string' ? raw.baseUrl.trim().replace(/\/+$/, '') : '';
-  out.model = typeof raw.model === 'string' ? raw.model.trim() : '';
-  out.temperature = clampNum(raw.temperature, 0.3, 0, 1.5);
-  return out;
-}
-
-/** 落库形态：明文 apiKey → 密文 apiKeyEnc；clearApiKey 则清空；否则沿用原密文 */
-function userLlmForStore(raw) {
-  const src = raw || {};
-  const out = sanitizeUserLlm(src);
-  if (src.clearApiKey) { out.apiKeyEnc = ''; return out; }
-  out.apiKeyEnc = src.apiKey ? encryptSecret(src.apiKey) : String(src.apiKeyEnc || '');
-  return out;
-}
-
-/** 读库后返回给前端的视图：含「是否设置 + 掩码」，绝不含明文 / 密文 */
-function userLlmForView(prefs) {
-  const l = (prefs && prefs.llm) || {};
-  const enc = typeof l.apiKeyEnc === 'string' ? l.apiKeyEnc : '';
-  const set = !!enc;
-  return {
-    baseUrl: typeof l.baseUrl === 'string' ? l.baseUrl : '',
-    model: typeof l.model === 'string' ? l.model : '',
-    temperature: typeof l.temperature === 'number' ? l.temperature : 0.3,
-    apiKeySet: set,
-    apiKeyHint: set ? maskSecret(decryptSecret(enc)) : '',
-  };
-}
-
-/** 解析「当前用户的有效模型配置」：用户自己配的优先，未配则回退站点默认 */
-function resolveUserLlm(user) {
-  const u = (user && user.prefs && user.prefs.llm) || {};
-  const site = settings.llm || {};
-  let apiKey = '';
-  if (typeof u.apiKeyEnc === 'string' && u.apiKeyEnc) apiKey = decryptSecret(u.apiKeyEnc) || '';
-  if (!apiKey) apiKey = site.apiKey || '';
-  return {
-    baseUrl: u.baseUrl || site.baseUrl || '',
-    model: u.model || site.model || '',
-    temperature: (typeof u.temperature === 'number') ? u.temperature
-      : (typeof site.temperature === 'number' ? site.temperature : 0.3),
-    apiKey,
-  };
-}
-
-const int = (v, d) => {
-  const n = parseInt(v, 10);
-  return Number.isFinite(n) ? n : d;
-};
-const bool = (v, d) => {
-  if (v === undefined || v === null || v === '') return d;
-  return v === true || v === '1' || v === 'true' || v === 'yes';
-};
-/** 取整并夹到 [lo, hi]，防止手改库 / 表单塞进离谱值 */
-const clampInt = (v, d, lo, hi) => Math.min(Math.max(int(v, d), lo), hi);
-/** 取浮点并夹到 [lo, hi] */
-const clampNum = (v, d, lo, hi) => {
-  const n = Number(v);
-  return Number.isFinite(n) ? Math.min(Math.max(n, lo), hi) : d;
-};
 
 function defaults() {
   const env = process.env;
@@ -284,7 +155,7 @@ async function loadSettings() {
   /* API Key：库里是密文，内存里保留明文副本供调用模型时使用。
    * 老版本把明文直接写在 llm.apiKey 里，这里一并读出来（下面会迁成密文）。 */
   const legacyKey = typeof merged.llm.apiKey === 'string' ? merged.llm.apiKey : '';
-  merged.llm.apiKey = decryptSecret(merged.llm.apiKeyEnc) || legacyKey;
+  merged.llm.apiKey = decryptSecret(merged.llm.apiKeyEnc, merged.cryptoSecret) || legacyKey;
 
   // 回写缺失的键，保证库里是完整的
   const patch = {};
@@ -293,7 +164,7 @@ async function loadSettings() {
   }
   // llm 组要特殊处理：只要库里还是明文形态（有 apiKey / 没有 apiKeyEnc），就重写一次
   if (!stored.llm || stored.llm.apiKey !== undefined || stored.llm.apiKeyEnc === undefined) {
-    patch.llm = llmForStore(merged.llm);
+    patch.llm = llmForStore(merged.llm, merged.cryptoSecret);
   }
   if (!stored.sessionSecret) patch.sessionSecret = merged.sessionSecret;
   if (!stored.cryptoSecret) patch.cryptoSecret = merged.cryptoSecret;
@@ -309,7 +180,7 @@ async function saveSettings(patch) {
   // llm 组内存里是明文，落库前换成密文，并把密文同步回内存副本，
   // 否则下一次保存会把 apiKeyEnc 当成「没有」而清掉
   if (persisted.llm) {
-    persisted.llm = llmForStore(persisted.llm);
+    persisted.llm = llmForStore(persisted.llm, settings.cryptoSecret);
     settings.llm.apiKeyEnc = persisted.llm.apiKeyEnc;
   }
   await db.setSettings(persisted);
@@ -544,27 +415,6 @@ function scheduleRefresh() {
 /* ============================================================
  * 图片代理（RSS 里的图直接由后端取，绕开防盗链与混合内容）
  * ============================================================ */
-const IMG_CACHE_TTL = 6 * 3600 * 1000;
-const imgCache = new Map();
-
-function isPrivateHost(host) {
-  const h = String(host || '').toLowerCase();
-  if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h === '0.0.0.0') return true;
-  if (h === '[::1]' || h === '::1') return true;
-  const m = h.match(/^\[?([0-9a-f:]+)\]?$/);
-  if (m && /:/.test(m[1])) return true;                     // 其它 IPv6 一律拒绝
-  const v4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (v4) {
-    const [a, b] = [Number(v4[1]), Number(v4[2])];
-    if (a === 10 || a === 127 || a === 0) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a >= 224) return true;
-  }
-  return false;
-}
-
 async function proxyImage(rawUrl, res) {
   let target;
   try { target = new URL(String(rawUrl || '')); } catch (_) {
@@ -635,49 +485,9 @@ function readBody(req, maxBytes = 1e6) {
   });
 }
 
-/** 把 url 归一化用于去重比较（忽略大小写与首尾空白） */
-const normUrl = (u) => String(u || '').trim().toLowerCase();
-
 /* ============================================================
  * OPML 解析（无依赖）：从订阅管理软件导出的 opml 里抽出订阅源与分组
  * ============================================================ */
-function parseOpmlAttrs(s) {
-  const out = {};
-  const re = /([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*"([^"]*)"/g;
-  let m;
-  while ((m = re.exec(s)) !== null) out[m[1].toLowerCase()] = m[2];
-  return out;
-}
-
-function parseOpml(text) {
-  const feeds = [];
-  const groups = [];          // 当前嵌套分组栈（文件夹名）
-  const tagRe = /<(\/?)(outline|opml|head|body)\b([^>]*?)(\/?)>/gi;
-  let m;
-  while ((m = tagRe.exec(text)) !== null) {
-    const closing = m[1] === '/';
-    const name = m[2].toLowerCase();
-    const attrs = m[3] || '';
-    const selfClose = m[4] === '/';
-    if (closing) { if (name === 'outline') groups.pop(); continue; }
-    if (name !== 'outline') continue;
-    const a = parseOpmlAttrs(attrs);
-    const xmlUrl = (a.xmlurl || a.url || '').trim();
-    if (xmlUrl) {
-      const title = (a.title || a.text || '').trim();
-      feeds.push({ url: xmlUrl, title, group: groups.filter(Boolean).join(' / ') || null });
-      if (!selfClose) groups.push(null);   // 占位，等它自己的 </outline> 弹出
-    } else {
-      const folder = (a.title || a.text || '').trim();
-      if (folder) {
-        groups.push(folder);
-        if (selfClose) groups.pop();        // 空文件夹，立即弹回
-      }
-    }
-  }
-  return feeds;
-}
-
 const json = (res, code, obj) => {
   res.writeHead(code, {
     'Content-Type': 'application/json; charset=utf-8',
@@ -691,58 +501,6 @@ const MIME = {
   '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.png': 'image/png',
   '.webmanifest': 'application/manifest+json',
 };
-
-// 外观配置：按账号维度持久化到 users.prefs.appearance（不再落浏览器 localStorage）
-const APPEARANCE_DEFAULTS = { theme: 'auto', accent: 'blue', fontSize: 'm', readerFont: 'sans', readerLh: 'm', readerWidth: 'm' };
-const APPEARANCE_KEYS = {
-  theme: ['auto', 'light', 'dark', 'github'],
-  accent: ['blue', 'violet', 'teal', 'green', 'amber', 'rose'],
-  fontSize: ['s', 'm', 'l'],
-  readerFont: ['sans', 'serif'],
-  readerLh: ['s', 'm', 'l'],
-  readerWidth: ['s', 'm', 'l', 'full'],
-};
-function sanitizeAppearance(raw) {
-  const out = Object.assign({}, APPEARANCE_DEFAULTS);
-  if (raw && typeof raw === 'object') {
-    for (const k of Object.keys(APPEARANCE_DEFAULTS)) {
-      if (APPEARANCE_KEYS[k].indexOf(raw[k]) >= 0) out[k] = raw[k];
-    }
-  }
-  return out;
-}
-function userAppearance(u) {
-  return sanitizeAppearance((u && u.prefs && u.prefs.appearance) || {});
-}
-
-// 布局偏好（视图模式 / 当前页面 / 分组折叠 / 阅读手风琴 / AI 子页 / 设置分组开合）
-// 同样按账号维度持久化到 users.prefs.layout，不再落浏览器 localStorage
-const LAYOUT_DEFAULTS = { view: 'grid', tab: 'reader', collapsedGroups: [], accordion: true, aiPage: 'digest', sections: {}, sort: 'new', rdScope: 'all' };
-const LAYOUT_VALUES = { view: ['grid', 'list'], tab: ['reader', 'cards', 'ai'], aiPage: ['digest', 'settings'], sort: ['new', 'old', 'name'], rdScope: ['all', 'unread', 'favorite'] };
-function sanitizeLayout(raw) {
-  const out = Object.assign({}, LAYOUT_DEFAULTS);
-  if (raw && typeof raw === 'object') {
-    if (LAYOUT_VALUES.view.indexOf(raw.view) >= 0) out.view = raw.view;
-    if (LAYOUT_VALUES.tab.indexOf(raw.tab) >= 0) out.tab = raw.tab;
-    if (Array.isArray(raw.collapsedGroups)) {
-      out.collapsedGroups = raw.collapsedGroups.filter((g) => typeof g === 'string').map((g) => g.slice(0, 40));
-    }
-    out.accordion = raw.accordion === false ? false : true;
-    if (LAYOUT_VALUES.aiPage.indexOf(raw.aiPage) >= 0) out.aiPage = raw.aiPage;
-    if (raw.sections && typeof raw.sections === 'object') {
-      const sec = {};
-      Object.keys(raw.sections).forEach((k) => { sec[k] = raw.sections[k] === true; });
-      out.sections = sec;
-    }
-    // 阅读页排序方式（最新 / 最早 / 名称）与默认范围（全部 / 未读 / 收藏）
-    if (LAYOUT_VALUES.sort.indexOf(raw.sort) >= 0) out.sort = raw.sort;
-    if (LAYOUT_VALUES.rdScope.indexOf(raw.rdScope) >= 0) out.rdScope = raw.rdScope;
-  }
-  return out;
-}
-function userLayout(u) {
-  return sanitizeLayout((u && u.prefs && u.prefs.layout) || {});
-}
 
 function serveStatic(pathname, res, user) {
   const rel = pathname === '/' ? '/index.html' : pathname;
@@ -770,94 +528,6 @@ function serveStatic(pathname, res, user) {
   });
 }
 
-/** 数据库行 → 前端卡片结构 */
-// bodyJson 里的图片块存的是原始外链，浏览器直连会被防盗链拦 / 过期签名失效
-// （卡片缩略图的 image/images 都走了 /api/img 代理，这里保持一致）
-function proxyBodyJson(json) {
-  if (!json) return null;
-  try {
-    const blocks = JSON.parse(json);
-    if (!Array.isArray(blocks)) return json;
-    let changed = false;
-    for (const b of blocks) {
-      if (b && b.t === 'img' && typeof b.src === 'string' && /^https?:\/\//i.test(b.src)) {
-        b.src = '/api/img?u=' + encodeURIComponent(b.src);
-        changed = true;
-      }
-    }
-    return changed ? JSON.stringify(blocks) : json;
-  } catch { return json; }
-}
-
-function toCard(row) {
-  return {
-    id: String(row.id),
-    name: row.title,
-    desc: row.description || '',
-    size: row.size || '',
-    tags: row.tags || [],
-    link: row.link || null,
-    pwd: row.pwd || null,
-    // 文章内所有可复制的链接（主链接优先）；复制按钮用它做多选，不做代理（复制的是原始地址）
-    links: Array.isArray(row.links) ? row.links : [],
-    image: row.image ? '/api/img?u=' + encodeURIComponent(row.image) : null,
-    // 多图文章：每张都走 /api/img 代理；没有就空数组（前端会退回单张 image）
-    images: Array.isArray(row.images)
-      ? row.images.map((u) => '/api/img?u=' + encodeURIComponent(u))
-      : [],
-    // 图文顺序块 JSON（阅读页内联渲染用）；图片块统一走 /api/img 代理；没有就 null（前端退回纯文本路径）
-    bodyJson: proxyBodyJson(row.body_json),
-    sourceUrl: row.source_url || null,
-    date: row.published_at ? new Date(row.published_at).toISOString() : null,
-    feedId: String(row.feed_id),
-    feedName: row.feed_name || '',
-    isRead: !!row.is_read,
-    isFavorite: !!row.is_favorite,
-    favoritedAt: row.favorited_at ? new Date(row.favorited_at).toISOString() : null,
-  };
-}
-
-function toFeedDto(f) {
-  // 频道自己设了频率就用它，否则跟随全局；nextRefreshAt 由「上次抓取 + 自己的间隔」推出来
-  const own = Number(f.refresh_minutes);
-  const ownMins = Number.isFinite(own) && own > 0 ? own : null;
-  const effMins = ownMins || (settings ? settings.source.refreshMinutes : 30);
-  const lastMs = f.last_fetched_at ? new Date(f.last_fetched_at).getTime() : 0;
-  return {
-    id: String(f.id),
-    url: f.url,
-    title: f.title || f.url,
-    customTitle: f.custom_title || null,
-    siteUrl: f.site_url || null,
-    description: f.description || '',
-    icon: f.icon_url ? '/api/img?u=' + encodeURIComponent(f.icon_url) : null,
-    // enabled = 采集开关；cardEnabled = 卡片页展示开关
-    enabled: !!f.enabled,
-    cardEnabled: !!f.card_enabled,
-    groupName: f.group_name || '',
-    sortOrder: Number(f.sort_order || 0),
-    entryCount: Number(f.entry_count || 0),
-    unreadCount: Number(f.unread_count || 0),
-    // refreshMinutes = 该频道单独设置的频率（null 表示跟随全局）
-    refreshMinutes: ownMins,
-    effectiveRefreshMinutes: effMins,
-    nextRefreshAt: lastMs ? new Date(lastMs + effMins * 60000).toISOString() : null,
-    status: f.last_status || null,
-    error: f.last_error || null,
-    lastFetchedAt: f.last_fetched_at ? new Date(f.last_fetched_at).toISOString() : null,
-  };
-}
-
-/** 从频道列表里抽出分组名（去重、未分组不列入） */
-function groupsOf(feeds) {
-  const set = new Set();
-  for (const f of feeds) {
-    const g = (f.groupName || '').trim();
-    if (g) set.add(g);
-  }
-  return [...set].sort((a, b) => a.localeCompare(b, 'zh'));
-}
-
 /* ============================================================
  * 路由
  * ============================================================ */
@@ -875,17 +545,6 @@ const dbRequired = (res) => {
 const GITHUB_REPO = process.env.GITHUB_REPO || 'chensnails/shiyue';
 const VERSION_CHECK_TTL = 10 * 60 * 1000;
 let versionCheckCache = { at: 0, data: null };
-
-/** 语义化版本比较：a 比 b 新返回 1，相同 0，旧 -1 */
-function compareVersion(a, b) {
-  const pa = String(a || '0').replace(/^v/i, '').split('.').map((n) => parseInt(n, 10) || 0);
-  const pb = String(b || '0').replace(/^v/i, '').split('.').map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const d = (pa[i] || 0) - (pb[i] || 0);
-    if (d) return d > 0 ? 1 : -1;
-  }
-  return 0;
-}
 
 async function fetchGithubLatest() {
   const headers = { 'User-Agent': 'shiyue-version-check', Accept: 'application/vnd.github+json' };
@@ -1049,7 +708,7 @@ const server = http.createServer(async (req, res) => {
       /* ---- 频道（RSS 订阅） ---- */
       if (pathname === '/api/feeds' && req.method === 'GET') {
         const rows = await db.listFeeds(user.id);
-        const feeds = rows.map(toFeedDto);
+        const feeds = rows.map((r) => toFeedDto(r, settings.source.refreshMinutes));
         // 侧栏「全部 / 未读 / 收藏」三个固定入口的计数（只算当前用户的）
         const flags = await db.entryFlagCounts(user.id).catch(() => ({ total: 0, unread: 0, favorite: 0 }));
         // 下一次抓取 = 所有开启采集的频道里最早到期的那个时刻
@@ -1106,7 +765,7 @@ const server = http.createServer(async (req, res) => {
         json(res, 200, {
           ok: true,
           existed: !!existed,
-          feed: toFeedDto(await db.getFeed(feed.id, user.id)),
+          feed: toFeedDto(await db.getFeed(feed.id, user.id), settings.source.refreshMinutes),
           added: result.added || 0,
         });
         return;
@@ -1168,7 +827,7 @@ const server = http.createServer(async (req, res) => {
           added: added.length,
           duplicated: parsed.length - added.length,
           groups: [...groupSet],
-          feeds: added.map(toFeedDto),
+          feeds: added.map((r) => toFeedDto(r, settings.source.refreshMinutes)),
         });
         return;
       }
@@ -1181,7 +840,7 @@ const server = http.createServer(async (req, res) => {
 
         if (feedRoute[2] && req.method === 'POST') {
           const r = await refreshFeed(feed);
-          json(res, 200, { ok: !r.error, result: r, feed: toFeedDto(await db.getFeed(id, user.id)) });
+          json(res, 200, { ok: !r.error, result: r, feed: toFeedDto(await db.getFeed(id, user.id), settings.source.refreshMinutes) });
           return;
         }
         if (req.method === 'PATCH' || req.method === 'POST') {
@@ -1202,7 +861,7 @@ const server = http.createServer(async (req, res) => {
               ? null : clampInt(n, null, 5, 1440);
           }
           await db.updateFeed(id, patch, user.id);
-          json(res, 200, { ok: true, feed: toFeedDto(await db.getFeed(id, user.id)) });
+          json(res, 200, { ok: true, feed: toFeedDto(await db.getFeed(id, user.id), settings.source.refreshMinutes) });
           return;
         }
         if (req.method === 'DELETE') {
@@ -1416,7 +1075,7 @@ const server = http.createServer(async (req, res) => {
           groupOrder: (user.prefs && user.prefs.groupOrder) || [],
           appearance: userAppearance(user),
           layout: userLayout(user),
-          llm: userLlmForView(user.prefs),
+          llm: userLlmForView(user.prefs, settings.cryptoSecret),
         });
         return;
       }
@@ -1441,7 +1100,7 @@ const server = http.createServer(async (req, res) => {
         // apiKey 仅在填写时加密成文，clearApiKey 则清空
         if (body.llm && typeof body.llm === 'object') {
           const prev = (user.prefs && user.prefs.llm) || {};
-          prefs.llm = userLlmForStore(Object.assign({}, prev, body.llm));
+          prefs.llm = userLlmForStore(Object.assign({}, prev, body.llm), settings.cryptoSecret);
         }
         await db.setUserPrefs(user.id, prefs);
         await loadUsers();
@@ -1555,7 +1214,7 @@ const server = http.createServer(async (req, res) => {
       /* ---- 摘要：测试模型（所有登录用户，用自己的配置）---- */
       if (pathname === '/api/digest/test-llm' && req.method === 'POST') {
         const body = await readBody(req);
-        const llm = resolveUserLlm(user);
+        const llm = resolveUserLlm(user, settings.llm, settings.cryptoSecret);
         // 允许前端临时覆盖（填了就用填的，留空沿用已保存 / 站点默认）
         if (body.llm) {
           if (body.llm.baseUrl !== undefined && body.llm.baseUrl.trim()) llm.baseUrl = body.llm.baseUrl.trim().replace(/\/+$/, '');
@@ -1587,7 +1246,7 @@ const server = http.createServer(async (req, res) => {
           ? body.feeds.map(Number).filter(Number.isFinite)
           : (settings.digest.scope === 'all' ? null : await db.enabledFeedIds(user.id));
         try {
-          const r = await digest.generate({ ownerId: user.id, feeds, date, force: !!body.force, llm: resolveUserLlm(user) });
+          const r = await digest.generate({ ownerId: user.id, feeds, date, force: !!body.force, llm: resolveUserLlm(user, settings.llm, settings.cryptoSecret) });
           json(res, 200, { ok: true, cached: r.cached, digest: r.digest });
         } catch (e) {
           json(res, 502, { error: String((e && e.message) || e) });
@@ -1645,7 +1304,7 @@ function scheduleDigest() {
       for (const uid of ids) {
         try {
           const u = await db.getUserById(uid);
-          const llm = u ? resolveUserLlm(u) : settings.llm;
+          const llm = u ? resolveUserLlm(u, settings.llm, settings.cryptoSecret) : settings.llm;
           const feeds = settings.digest.scope === 'all' ? null : await db.enabledFeedIds(uid);
           const r = await digest.generate({ ownerId: uid, feeds, force: true, llm });
           log(`[digest] 用户#${uid} 已生成 ${r.digest.date} 摘要：`
@@ -1747,7 +1406,7 @@ async function buildStatus() {
   const entryInfo = { total: 0, unread: 0, favorite: 0, added24h: 0, oldest: null, newest: null };
   if (st.ready) {
     try {
-      const feeds = (await db.allFeeds()).map(toFeedDto);
+      const feeds = (await db.allFeeds()).map((r) => toFeedDto(r, settings.source.refreshMinutes));
       feedStats = {
         total: feeds.length,
         enabled: feeds.filter((f) => f.enabled).length,
