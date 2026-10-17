@@ -587,7 +587,13 @@ module.exports = function createDb({ connectionString, log = console.log }) {
     if (kw) {
       vals.push('%' + kw + '%');
       const p = `$${vals.length}`;
+      // v2.6.0：全文检索覆盖正文 content（此前只搜标题/描述/标签，正文里出现的关键词搜不到）。
+      // 实测（线上 4.1 万条 / 234MB）：命中场景走 entries_pub_idx 倒序 + 提前 LIMIT，约 24ms；
+      // 零命中最坏要扫全表读 content detoast，约 1.4s —— 单用户自用可接受，故不建
+      // content 的 trgm 索引（长正文 trgm 索引体积会是 title 索引的几十倍，不成比例）。
+      // 等 entries 上到数十万级再重新评估 trgm / tsvector。
       where.push(`(e.title ILIKE ${p} OR e.description ILIKE ${p}
+        OR e.content ILIKE ${p}
         OR EXISTS (SELECT 1 FROM unnest(e.tags) t WHERE t ILIKE ${p}))`);
     }
     // 未读 / 收藏是「额外收窄」，可以与频道、分组、关键词叠加

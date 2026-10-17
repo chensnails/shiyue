@@ -294,7 +294,7 @@ export function CardsView() {
         <div className="search-box">
           <svg className="search-ico" aria-hidden="true" focusable="false"><use href="#i-search" /></svg>
           <input id="searchInput" name="q" type="search" ref={searchRef}
-            placeholder="搜索资源名称、描述或标签…（服务端检索）" autoComplete="off"
+            placeholder="搜索资源名称、描述、正文或标签…（服务端检索）" autoComplete="off"
             value={qDraft} onChange={onSearchInput} />
         </div>
         <select id="feedSelect" className="select" title="频道筛选" value={feedValue}

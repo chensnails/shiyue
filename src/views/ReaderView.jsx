@@ -435,7 +435,7 @@ export function ReaderView() {
         <div className="reader-search">
           <svg className="search-ico" aria-hidden="true" focusable="false"><use href="#i-search" /></svg>
           <input id="readerSearch" name="rq" type="search" ref={searchRef} defaultValue={q}
-            placeholder="搜索标题、描述或标签…（服务端检索）" autoComplete="off" enterKeyHint="search" aria-label="搜索文章"
+            placeholder="搜索标题、描述、正文或标签…（服务端检索）" autoComplete="off" enterKeyHint="search" aria-label="搜索文章"
             onInput={onSearchInput} onKeyDown={onSearchKey} />
           <button className="reader-search-clear" id="readerSearchClear" type="button" hidden={!q}
             aria-label="清除搜索" onClick={onSearchClear}>
