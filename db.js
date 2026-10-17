@@ -835,6 +835,18 @@ module.exports = function createDb({ connectionString, log = console.log }) {
     return r.rowCount || 0;
   }
 
+  /** 手动清空图片缓存（设置里「清空图片缓存」用）；返回删除行数 */
+  async function clearImageCache() {
+    const r = await q('DELETE FROM image_cache');
+    return r.rowCount || 0;
+  }
+
+  /** 图片缓存统计：{ count, bytes } */
+  async function imageCacheStats() {
+    const r = await q('SELECT count(*)::int AS n, COALESCE(sum(size), 0)::bigint AS bytes FROM image_cache');
+    return { count: r.rows[0].n, bytes: Number(r.rows[0].bytes) };
+  }
+
   return {
     pool, q, start, onReady, status, close, migrate,
     getSettings, setSetting, setSettings,
@@ -846,6 +858,6 @@ module.exports = function createDb({ connectionString, log = console.log }) {
     setEntryFlags, markEntriesRead, entryFlagCounts,
     tableCounts, entryWindow, ping,
     saveDigest, readDigest, listDigestDates, hasDigest, digestStatsAll, pruneDigests,
-    getImageCache, setImageCache, pruneImageCache,
+    getImageCache, setImageCache, pruneImageCache, clearImageCache, imageCacheStats,
   };
 };

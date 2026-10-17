@@ -102,6 +102,14 @@ function defaults() {
       autoRefreshMinutes: clampInt(env.AUTO_REFRESH_MINUTES, 0, 0, 1440),
       // 出网代理：空 = 直连；http(s):// 或 socks5://
       proxyUrl: '',
+      /* 图片缓存（v2.4.0 起可在「采集参数」里调；env 只作为首次落库的部署级默认值，
+       * 之后以库里 / 界面保存的值为准） */
+      // 回源窗口（stale-while-revalidate）：超过这个天数仍先返回旧图、后台静默回源刷新
+      imgTtlDays: int(env.IMG_TTL_DAYS, int(env.IMG_CACHE_TTL_DAYS, 7)),
+      // 保留天数：缓存图片在库里保留多久，超期由每日清理任务删除
+      imgKeepDays: int(env.IMG_KEEP_DAYS, int(env.IMG_CACHE_TTL_DAYS, 90)),
+      imgMaxDim: int(env.IMG_MAX_DIM, 1280),
+      imgQuality: int(env.IMG_WEBP_QUALITY, 78),
     },
     sessionSecret: crypto.randomBytes(32).toString('hex'),
     // 敏感字段（模型 API Key）的加密主密钥，与 sessionSecret 分开：
@@ -128,6 +136,11 @@ function normalizeSettings(s) {
   s.source.autoRefreshMinutes = clampInt(s.source.autoRefreshMinutes, 0, 0, 1440);
   // 代理：剥空白 + 长度上限 + 不接受非标准协议（前端做提示，服务端做兜底校验）
   s.source.proxyUrl = String(s.source.proxyUrl || '').trim().slice(0, 500);
+  // 图片缓存四参数：老库里没有这些键时 defaults() 已补；手改库 / 表单脏值一律夹回区间
+  s.source.imgTtlDays = clampInt(s.source.imgTtlDays, 7, 1, 365);
+  s.source.imgKeepDays = clampInt(s.source.imgKeepDays, 90, 1, 3650);
+  s.source.imgMaxDim = clampInt(s.source.imgMaxDim, 1280, 320, 4096);
+  s.source.imgQuality = clampInt(s.source.imgQuality, 78, 30, 100);
   return s;
 }
 
@@ -377,11 +390,11 @@ async function refreshFeeds(feeds, { concurrency, total, startedAt = Date.now(),
   // 两个上限是「并且」关系：条数上限 + 时间上限（keepDays = 0 表示不限时间）
   const prunedByCount = await db.pruneEntries(settings.source.keepPerFeed).catch(() => 0);
   const prunedByAge = await db.pruneEntriesByAge(settings.source.keepDays).catch(() => 0);
-  // 图片缓存日常清理（默认 90 天），限频为每天至多一次
+  // 图片缓存日常清理（默认保留 90 天，管理员可在「采集参数」调整），限频为每天至多一次
   let prunedImg = 0;
   if (Date.now() - lastImagePrune > 24 * 3600 * 1000) {
     lastImagePrune = Date.now();
-    prunedImg = await db.pruneImageCache(Number(process.env.IMG_CACHE_TTL_DAYS || 90)).catch(() => 0);
+    prunedImg = await db.pruneImageCache(imgCfg().keepDays).catch(() => 0);
   }
   const added = results.reduce((n, r) => n + (r.added || 0), 0);
   const failed = results.filter((r) => r.error).length;
@@ -444,7 +457,16 @@ function scheduleRefresh() {
 //   - 过期回源（stale-while-revalidate，默认 7 天）：超过窗口仍先返回旧图，后台静默刷新，
 //     兼顾「避免重复请求」与「头像/配图换了别永远陈旧」
 // ⚠️ imgCache 是 proxyImage 闭包持有的运行时状态（非纯函数），留在 server.js。
-const IMG_CACHE_TTL = Number(process.env.IMG_CACHE_TTL_DAYS || 7) * 86400000;
+// 生效值一律现算（管理员改了设置要立刻见效，不用重启）：ttl 天 → 毫秒
+function imgCfg() {
+  const s = (settings && settings.source) || {};
+  return {
+    ttlMs: (clampInt(s.imgTtlDays, 7, 1, 365)) * 86400000,
+    keepDays: clampInt(s.imgKeepDays, 90, 1, 3650),
+    maxDim: clampInt(s.imgMaxDim, 1280, 320, 4096),
+    quality: clampInt(s.imgQuality, 78, 30, 100),
+  };
+}
 const IMG_L1_MAX = 500;
 const imgCache = new Map();
 
@@ -480,7 +502,9 @@ async function fetchAndCache(key, url) {
     if (raw.length > IMG_MAX_BYTES) throw Object.assign(new Error('image too large'), { status: 502 });
 
     // 压缩：栅格图→WebP；svg/ico 或不降反增的小图→原样存
-    const comp = await compressImage(raw, type);
+    // 参数现取（imgCfg），管理员在「采集参数」改完下次抓取即生效
+    const ic = imgCfg();
+    const comp = await compressImage(raw, type, { maxDim: ic.maxDim, quality: ic.quality });
     const finalType = comp ? comp.contentType : type;
     const finalBuf = comp ? comp.buf : raw;
     try {
@@ -525,7 +549,7 @@ async function proxyImage(rawUrl, res) {
   try { l2 = await db.getImageCache(key); } catch (_) { /* 库不可用时不致命 */ }
   if (l2) {
     cacheL1(key, l2.contentType, l2.data);
-    if (Date.now() - new Date(l2.createdAt).getTime() < IMG_CACHE_TTL) {
+    if (Date.now() - new Date(l2.createdAt).getTime() < imgCfg().ttlMs) {
       serveImage(res, l2.contentType, l2.data);   // 新鲜：直接出
       return;
     }
@@ -1080,6 +1104,11 @@ const server = http.createServer(async (req, res) => {
             // v1.5.0 修复：原来漏返该字段，前端「出网代理」输入框重开面板后是空的，
             // 用户再点保存会把我置成空——GET 与 POST 的字段集必须一致
             proxyUrl: settings.source.proxyUrl,
+            // v2.4.0：图片缓存参数（压缩尺寸 / 质量 / 回源窗口 / 保留天数）
+            imgTtlDays: settings.source.imgTtlDays,
+            imgKeepDays: settings.source.imgKeepDays,
+            imgMaxDim: settings.source.imgMaxDim,
+            imgQuality: settings.source.imgQuality,
           },
         });
         return;
@@ -1136,6 +1165,11 @@ const server = http.createServer(async (req, res) => {
           if (s.concurrency !== undefined) next.concurrency = clampInt(s.concurrency, 3, 1, 10);
           if (s.autoRefreshMinutes !== undefined) next.autoRefreshMinutes = clampInt(s.autoRefreshMinutes, 0, 0, 1440);
           if (s.proxyUrl !== undefined) next.proxyUrl = String(s.proxyUrl || '').trim().slice(0, 500);
+          // v2.4.0：图片缓存。前端传的是字符串，clampInt 会 parseInt；脏值夹回区间而不是报错
+          if (s.imgTtlDays !== undefined) next.imgTtlDays = clampInt(s.imgTtlDays, 7, 1, 365);
+          if (s.imgKeepDays !== undefined) next.imgKeepDays = clampInt(s.imgKeepDays, 90, 1, 3650);
+          if (s.imgMaxDim !== undefined) next.imgMaxDim = clampInt(s.imgMaxDim, 1280, 320, 4096);
+          if (s.imgQuality !== undefined) next.imgQuality = clampInt(s.imgQuality, 78, 30, 100);
           patch.source = next;
         }
 
@@ -1144,6 +1178,30 @@ const server = http.createServer(async (req, res) => {
         if (patch.digest) scheduleDigest();
         if (patch.source) scheduleRefresh();
         json(res, 200, { ok: true });
+        return;
+      }
+
+      /* ---- 图片缓存统计 / 手动清空 —— 仅管理员 ---- */
+      if (pathname === '/api/image-cache' && req.method === 'GET') {
+        if (!isAdmin(user)) { json(res, 403, { error: '需要管理员权限' }); return; }
+        try {
+          const s = await db.imageCacheStats();
+          json(res, 200, { ok: true, count: s.count, bytes: s.bytes });
+        } catch (e) {
+          json(res, 500, { error: String((e && e.message) || e) });
+        }
+        return;
+      }
+      if (pathname === '/api/image-cache/clear' && req.method === 'POST') {
+        if (!isAdmin(user)) { json(res, 403, { error: '需要管理员权限' }); return; }
+        try {
+          const removed = await db.clearImageCache();
+          imgCache.clear();   // L1 一并清掉，否则刚删的图还会从内存里命中
+          log(`[img] 图片缓存已手动清空：${removed} 条`);
+          json(res, 200, { ok: true, removed });
+        } catch (e) {
+          json(res, 500, { error: String((e && e.message) || e) });
+        }
         return;
       }
 

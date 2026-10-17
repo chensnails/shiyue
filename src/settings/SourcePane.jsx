@@ -56,11 +56,35 @@ const KEEP_DAYS_OPTIONS = [
 const AUTO_REFRESH_OPTIONS = [
   [0, '关闭'], [1, '每 1 分钟'], [5, '每 5 分钟'], [15, '每 15 分钟'], [30, '每 30 分钟'],
 ];
+// v2.4.0：图片缓存参数（仅管理员）
+const IMG_TTL_OPTIONS = [
+  [1, '1 天'], [3, '3 天'], [7, '7 天'], [14, '14 天'], [30, '30 天'], [90, '90 天'],
+];
+const IMG_KEEP_OPTIONS = [
+  [7, '7 天'], [30, '1 个月'], [90, '3 个月'], [180, '半年'], [365, '1 年'], [730, '2 年'],
+];
 // 兜底值 = 旧 HTML 里各控件的默认值（配置拉到之前显示这些；拉到之前禁止保存）
 const CFG_DEFAULTS = {
   refreshMinutes: '30', keepPerFeed: '300', keepDays: '0',
   timeoutSeconds: '25', concurrency: '3', autoRefreshMinutes: '0', proxyUrl: '',
+  imgTtlDays: '7', imgKeepDays: '90', imgMaxDim: '1280', imgQuality: '78',
 };
+
+/** 字节数格式化（图片缓存体积展示） */
+function fmtBytes(n) {
+  const b = Number(n) || 0;
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
+  return `${(b / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/** 选项表补上「库里当前值」：部署时用 env 设了非标称值（如 IMG_TTL_DAYS=5）也能正确回显 */
+function withCurrentOption(list, cur) {
+  if (list.some(([v]) => String(v) === String(cur))) return list;
+  const n = Number(cur);
+  if (!Number.isFinite(n)) return list;
+  return [...list, [n, `${n} 天`]].sort((a, b) => a[0] - b[0]);
+}
 
 /* ---------- 纯函数（自旧 app.js 移植，行为逐字对齐） ---------- */
 function fmtMinutes(m) {
@@ -131,6 +155,7 @@ export function SourcePane({ admin }) {
   const [cfg, setCfg] = useState(CFG_DEFAULTS);        // 采集参数表单（字符串，与旧 DOM .value 一致）
   const [cfgLoaded, setCfgLoaded] = useState(false);   // 复刻旧 srcFormReady
   const [loadError, setLoadError] = useState('');      // /api/feeds 拉取失败（列表区兜底）
+  const [imgStats, setImgStats] = useState({ count: 0, bytes: 0 });   // 图片缓存统计（v2.4.0）
 
   const [url, setUrl] = useState('');
   const [result, setResult] = useState(null);          // { ok, msg } | null —— #feedResult
@@ -184,8 +209,20 @@ export function SourcePane({ admin }) {
         concurrency: String(src.concurrency == null ? '' : src.concurrency),
         autoRefreshMinutes: String(src.autoRefreshMinutes == null ? 0 : src.autoRefreshMinutes),
         proxyUrl: String(src.proxyUrl || ''),
+        imgTtlDays: String(src.imgTtlDays == null ? '' : src.imgTtlDays),
+        imgKeepDays: String(src.imgKeepDays == null ? '' : src.imgKeepDays),
+        imgMaxDim: String(src.imgMaxDim == null ? '' : src.imgMaxDim),
+        imgQuality: String(src.imgQuality == null ? '' : src.imgQuality),
       });
       setCfgLoaded(true);
+      // 图片缓存统计失败不阻塞参数回填（面板照常可用，只是看不到张数）
+      try {
+        const sres = await S().apiFetch('/api/image-cache');
+        if (sres.ok) {
+          const sd = await sres.json();
+          setImgStats({ count: Number(sd.count) || 0, bytes: Number(sd.bytes) || 0 });
+        }
+      } catch (_) { /* 统计接口异常时保持兜底 */ }
     } catch (err) {
       // 拉取失败：保持兜底值 + 禁止保存（旧实现此时直接把整个面板打成读取失败，这里更健壮）
       setCfgLoaded(false);
@@ -586,6 +623,10 @@ export function SourcePane({ admin }) {
           concurrency: cfg.concurrency,
           autoRefreshMinutes: cfg.autoRefreshMinutes,
           proxyUrl: cfg.proxyUrl,
+          imgTtlDays: cfg.imgTtlDays,
+          imgKeepDays: cfg.imgKeepDays,
+          imgMaxDim: cfg.imgMaxDim,
+          imgQuality: cfg.imgQuality,
         },
       }));
       const data = await res.json().catch(() => ({}));
@@ -595,6 +636,25 @@ export function SourcePane({ admin }) {
       if (s.scheduleAutoRefresh) s.scheduleAutoRefresh();   // 立刻按新的「页面自动刷新」间隔重排
     } catch (err) {
       setResult({ ok: false, msg: '保存失败：' + (err.message || err) });
+    } finally {
+      setBusy('');
+    }
+  };
+
+  /** 清空图片缓存（v2.4.0）：删库 + 清 L1，下次访问按新压缩参数重新缓存 */
+  const onClearImgCache = async () => {
+    const s = S();
+    const n = Number(imgStats.count) || 0;
+    if (!confirm(`确定清空图片缓存（${n} 张）？\n已缓存的图片会从库里删除，下次浏览时按当前压缩参数重新缓存。`)) return;
+    setBusy('imgclear');
+    try {
+      const res = await s.apiFetch('/api/image-cache/clear', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'HTTP ' + res.status);
+      setImgStats({ count: 0, bytes: 0 });
+      s.toast(`已清空 ${data.removed} 张缓存图片`);
+    } catch (err) {
+      s.toast('清空失败：' + (err.message || err), false);
     } finally {
       setBusy('');
     }
@@ -965,6 +1025,57 @@ export function SourcePane({ admin }) {
                     {AUTO_REFRESH_OPTIONS.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
                   </select>
                 </label>
+                <label htmlFor="srcImgTtl">图片回源窗口{' '}
+                  <select id="srcImgTtl" className="select" value={cfg.imgTtlDays} onChange={setCfgField('imgTtlDays')}>
+                    {withCurrentOption(IMG_TTL_OPTIONS, cfg.imgTtlDays).map(([v, t]) => <option key={v} value={v}>{t}</option>)}
+                  </select>
+                </label>
+                <label htmlFor="srcImgKeep">图片保留{' '}
+                  <select id="srcImgKeep" className="select" value={cfg.imgKeepDays} onChange={setCfgField('imgKeepDays')}>
+                    {withCurrentOption(IMG_KEEP_OPTIONS, cfg.imgKeepDays).map(([v, t]) => <option key={v} value={v}>{t}</option>)}
+                  </select>
+                </label>
+                <label htmlFor="srcImgMaxDim">图片最长边{' '}
+                  <input
+                    id="srcImgMaxDim"
+                    type="number"
+                    min="320"
+                    max="4096"
+                    step="80"
+                    value={cfg.imgMaxDim}
+                    placeholder="1280"
+                    onChange={setCfgField('imgMaxDim')}
+                  />{' '}
+                  px
+                </label>
+                <label htmlFor="srcImgQuality">图片质量{' '}
+                  <input
+                    id="srcImgQuality"
+                    type="number"
+                    min="30"
+                    max="100"
+                    step="1"
+                    value={cfg.imgQuality}
+                    placeholder="78"
+                    onChange={setCfgField('imgQuality')}
+                  />{' '}
+                  / 100
+                </label>
+                <div className="src-img-cache">
+                  <span className="src-img-cache-stat">
+                    图片缓存 <strong>{imgStats.count}</strong> 张 · {fmtBytes(imgStats.bytes)}
+                  </span>
+                  <button
+                    className="btn btn-ghost"
+                    id="clearImgCacheBtn"
+                    type="button"
+                    title="删除全部已缓存图片（库 + 内存），下次访问按当前压缩参数重新缓存"
+                    disabled={busy === 'imgclear' || !imgStats.count}
+                    onClick={onClearImgCache}
+                  >
+                    {busy === 'imgclear' ? '清空中…' : '清空图片缓存'}
+                  </button>
+                </div>
               </div>
               <small className="form-tip">
                 条目同时受两个上限约束：每个频道最多保留上面「每频道保留」的条数，且发布时间早于「最长保留」的一律清理。
@@ -973,6 +1084,9 @@ export function SourcePane({ admin }) {
                 「自动抓取」是服务端去源站取新内容；「页面自动刷新」只是让打开的页面重新读一次列表，不触发抓取。
                 每个频道还能在下方单独指定抓取频率，未设置的跟随全局。
                 「出网代理」抓 RSS 和代理图片都走这里；支持 <code>http://</code>、<code>https://</code>、<code>socks5://</code>（含账号可写 <code>http://user:pass@host:port</code>）；留空走默认出网。保存后下次抓取生效。
+                图片部分：全站图片（卡片图 / 阅读大图 / 频道头像 / 灯箱）走统一代理永久缓存在数据库，「图片最长边」「图片质量」控制 WebP 压缩强度——越小越省空间也越模糊；
+                「图片回源窗口」内的重复访问不再请求上游，超过窗口仍先返回旧图、后台静默刷新；「图片保留」到期后由每日清理删除。
+                改动保存后对之后新缓存的图片生效；点「清空图片缓存」可立即按新参数重新缓存全部图片。
               </small>
             </div>
           </details>

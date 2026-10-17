@@ -18,6 +18,30 @@
 
 ---
 
+## [2.4.0] — 2026-10-17
+
+> 图片缓存从「env -only」升级为**设置可调**，并新增**手动清空**入口；另修复一个线上 503 死链频道。
+
+### 1. 图片缓存参数接入「采集参数」（仅管理员）
+
+- 新增四个可调项（`settings.source`，落库保存，改完即时生效、无需重启）：
+  - **图片回源窗口**（`imgTtlDays`，默认 7 天）：stale-while-revalidate 窗口，窗口内重复访问不再请求上游；
+  - **图片保留**（`imgKeepDays`，默认 90 天）：缓存图片在库保留时长，超期由每日清理删除；
+  - **图片最长边**（`imgMaxDim`，默认 1280 px）与 **图片质量**（`imgQuality`，默认 78）：WebP 压缩强度。
+- `compressImage` 增加可选 `opts` 参数，模块级 env（`IMG_MAX_DIM` / `IMG_WEBP_QUALITY` 等）降级为首次落库的部署级默认值；旧环境变量 `IMG_CACHE_TTL_DAYS` 的兼容语义保留。
+- GET / POST `/api/config` 字段集同步扩充；后端对脏值一律 `clampInt` 夹回区间而非报错。
+
+### 2. 图片缓存统计 + 手动清空
+
+- 新增 `GET /api/image-cache`（张数 / 体积统计）与 `POST /api/image-cache/clear`（清库 + 清 L1 内存，返回删除行数），均仅管理员。
+- 「采集参数」区新增「图片缓存 N 张 · X.X MB + 清空图片缓存」一行：点击 confirm 后立即按当前压缩参数重新缓存全部图片。
+
+### 3. 修复线上 503 死链频道
+
+- `rsshub.9610000.xyz/gitee/releases/fj1994/fnos-iptv`（两个用户各订阅一份）持续 503。定位为**上游 gitee API v5 匿名限流（403）**导致该 RSSHub 实例所有 `/gitee/*` 路由失败，非 URL 错误、也无 GitHub 镜像可换源；已停用这两个频道的采集（订阅与已抓条目保留，待 RSSHub 侧恢复 gitee 访问后可随时再开）。
+
+---
+
 ## [2.3.1] — 2026-10-17
 
 > 修正 `/api/feeds/refresh` 失败列表的字段：抓取去重后结果按 URL 组归并，失败项原引用不存在的 `results[].feedId` 会返回 `undefined`，改为返回 `url`。前端只读 `.length`，`/api/status` 的频道级失败列表另走 `feeds` 表（仍带 `feedId`），均不受影响。

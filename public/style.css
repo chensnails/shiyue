@@ -1315,6 +1315,21 @@ body.modal-open {
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 .source-opts .src-proxy-row input::placeholder { color: var(--text-faint); }
+/* 图片缓存行（v2.4.0）：统计文字 + 清空按钮，占整行与代理行一致 */
+.source-opts .src-img-cache {
+  flex-basis: 100%;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding-top: 2px;
+}
+.source-opts .src-img-cache-stat {
+  font-size: 0.7813rem; color: var(--text-muted);
+}
+.source-opts .src-img-cache-stat strong { color: var(--text); font-weight: 600; }
+.source-opts .src-img-cache .btn-ghost {
+  padding: 6px 12px;
+  font-size: 0.7813rem;
+}
+.source-opts .src-img-cache .btn-ghost:disabled { opacity: .5; cursor: default; }
 
 .feed-row {
   display: flex; align-items: center; gap: 11px;
