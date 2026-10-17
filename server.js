@@ -452,7 +452,9 @@ async function proxyImage(rawUrl, res) {
       redirect: 'follow',
       dispatcher: getProxyDispatcher(settings && settings.source && settings.source.proxyUrl) || undefined,
     });
-    if (!resp.ok) { res.writeHead(502).end('upstream ' + resp.status); return; }
+    // 上游明确应答了 4xx/5xx → 透传状态码，别伪装成 502 网关错误。
+    // 否则排查时看到 502 会误以为是代理/缓存坏了（v2.2.1 的教训），其实只是图片源自己 404/403。
+    if (!resp.ok) { res.writeHead(resp.status, { 'Content-Type': 'text/plain' }).end('upstream ' + resp.status); return; }
     const type = resp.headers.get('content-type') || 'image/jpeg';
     if (!/^image\//i.test(type)) { res.writeHead(502).end('not an image'); return; }
     const buf = Buffer.from(await resp.arrayBuffer());

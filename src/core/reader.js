@@ -100,16 +100,46 @@ export function readerToggleAccordion() {
   toast(accordionOn ? '已开启单篇展开' : '已改为可同时展开多篇');
 }
 
+/** 找列表里某篇的 DOM：按 data-id 比对，避开 id 里特殊字符对 CSS 选择器的影响（与 kbdItems 取法一致） */
+function findArtItemEl(id) {
+  const want = String(id);
+  const items = document.querySelectorAll('#readerList .art-item');
+  for (const el of items) if (el.dataset.id === want) return el;
+  return null;
+}
+
 export async function expandReaderArt(id) {
-  // 手风琴：先把其它展开的收掉，再展开这一条
+  /* 手风琴（默认开启）：展开这一条之前会先把其它展开的收掉。
+   * 若被收起的那篇在目标文章「上方」，它一收起，列表在目标文章上方就矮了一大截，
+   * 而窗口 scrollTop 保持不变 —— 于是目标文章整体上移、跳离用户点击的位置，甚至滚出屏幕。
+   * 这就是「上一篇没收起时，点下面的会跳到错误位置」的根因。
+   * 对策：展开前记下目标文章的视口位置，DOM 更新后把差值补滚回去，保证「点哪篇、它停在哪」。
+   * 若被收起的那篇在目标文章下方，差值为 0，不会有多余滚动。 */
+  let anchorTop = null;
   if (accordionOn) {
-    for (const openId of Array.from(state.rdExpanded)) {
-      if (String(openId) !== String(id)) state.rdExpanded.delete(openId);
+    const others = Array.from(state.rdExpanded).filter((openId) => String(openId) !== String(id));
+    if (others.length) {
+      const el = findArtItemEl(id);
+      if (el) anchorTop = el.getBoundingClientRect().top;
+      for (const openId of others) state.rdExpanded.delete(openId);
     }
   }
+
   state.rdExpanded.add(id);
   renderReader();
   markEntryRead(id);   // 展开了就算读过了
+
+  if (anchorTop != null) {
+    // renderReader() 只是派发 __readerTick，React 的 setState 在微任务里提交 DOM（早于 rAF），
+    // 所以这里量到的是更新后的位置，补偿也在同一帧完成 —— 用户几乎看不到跳动。
+    // 用瞬时滚动而非 smooth：位移在一帧内被抵消最连贯，平滑动画反而会把这次修正放大成一次可见的滚动。
+    requestAnimationFrame(() => {
+      const el = findArtItemEl(id);
+      if (!el) return;
+      const delta = el.getBoundingClientRect().top - anchorTop;
+      if (Math.abs(delta) > 1) window.scrollBy(0, delta);
+    });
+  }
 
   if (state.rdBody.has(id) || state.rdBodyErr.has(id)) return;
   try {
