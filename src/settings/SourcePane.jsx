@@ -68,6 +68,7 @@ const CFG_DEFAULTS = {
   refreshMinutes: '30', keepPerFeed: '300', keepDays: '0',
   timeoutSeconds: '25', concurrency: '3', autoRefreshMinutes: '0', proxyUrl: '',
   imgTtlDays: '7', imgKeepDays: '90', imgMaxDim: '1280', imgQuality: '78',
+  feedFailLimit: '5',
 };
 
 /** 字节数格式化（图片缓存体积展示） */
@@ -213,6 +214,7 @@ export function SourcePane({ admin }) {
         imgKeepDays: String(src.imgKeepDays == null ? '' : src.imgKeepDays),
         imgMaxDim: String(src.imgMaxDim == null ? '' : src.imgMaxDim),
         imgQuality: String(src.imgQuality == null ? '' : src.imgQuality),
+        feedFailLimit: String(src.feedFailLimit == null ? '' : src.feedFailLimit),
       });
       setCfgLoaded(true);
       // 图片缓存统计失败不阻塞参数回填（面板照常可用，只是看不到张数）
@@ -627,6 +629,7 @@ export function SourcePane({ admin }) {
           imgKeepDays: cfg.imgKeepDays,
           imgMaxDim: cfg.imgMaxDim,
           imgQuality: cfg.imgQuality,
+          feedFailLimit: cfg.feedFailLimit,
         },
       }));
       const data = await res.json().catch(() => ({}));
@@ -1009,6 +1012,19 @@ export function SourcePane({ admin }) {
                   />{' '}
                   个
                 </label>
+                <label htmlFor="srcFeedFailLimit">连续失败自动停用{' '}
+                  <input
+                    id="srcFeedFailLimit"
+                    type="number"
+                    min="2"
+                    max="20"
+                    step="1"
+                    value={cfg.feedFailLimit}
+                    placeholder="5"
+                    onChange={setCfgField('feedFailLimit')}
+                  />{' '}
+                  次
+                </label>
                 <label className="src-proxy-row" htmlFor="srcProxy">出网代理{' '}
                   <input
                     id="srcProxy"
@@ -1084,6 +1100,7 @@ export function SourcePane({ admin }) {
                 「自动抓取」是服务端去源站取新内容；「页面自动刷新」只是让打开的页面重新读一次列表，不触发抓取。
                 每个频道还能在下方单独指定抓取频率，未设置的跟随全局。
                 「出网代理」抓 RSS 和代理图片都走这里；支持 <code>http://</code>、<code>https://</code>、<code>socks5://</code>（含账号可写 <code>http://user:pass@host:port</code>）；留空走默认出网。保存后下次抓取生效。
+                「连续失败自动停用」：频道连续抓取失败达到此次数就自动停止它的采集（不再每轮重试打扰源站），在「状态 → 异常频道」里重试成功会自动恢复采集，手动重新打开采集开关也会清零计数。
                 图片部分：全站图片（卡片图 / 阅读大图 / 频道头像 / 灯箱）走统一代理永久缓存在数据库，「图片最长边」「图片质量」控制 WebP 压缩强度——越小越省空间也越模糊；
                 「图片回源窗口」内的重复访问不再请求上游，超过窗口仍先返回旧图、后台静默刷新；「图片保留」到期后由每日清理删除。
                 改动保存后对之后新缓存的图片生效；点「清空图片缓存」可立即按新参数重新缓存全部图片。

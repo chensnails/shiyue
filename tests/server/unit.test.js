@@ -605,3 +605,13 @@ test('toFeedDto：从未抓取过时 nextRefreshAt 为 null（而不是 epoch）
   assert.equal(d.status, null);
   assert.equal(d.error, null);
 });
+
+test('toFeedDto：failStreak 透传，缺列为 0（v2.5.0 自动停用计数）', () => {
+  const none = toFeedDto({ id: 1, url: 'u', title: 'T' }, 30);
+  assert.equal(none.failStreak, 0);
+  const some = toFeedDto({ id: 1, url: 'u', title: 'T', fail_streak: 3 }, 30);
+  assert.equal(some.failStreak, 3);
+  // 脏值（老库里可能是 NULL / 字符串）不能把数字字段污染成 NaN
+  const dirty = toFeedDto({ id: 1, url: 'u', title: 'T', fail_streak: null }, 30);
+  assert.equal(dirty.failStreak, 0);
+});

@@ -128,15 +128,15 @@ const statusPayload = () => ({
     container: { memoryUsed: 125829120, memoryLimit: 268435456, cpuPercent: 3 },
     loadavg: [0.5, 0.4, 0.3], cpuCount: 4, now: Date.now(),
   },
-  db: { ready: true, latencyMs: 2, pool: { total: 3, max: 10, idle: 7, waiting: 0 }, tables: { feeds: 3, entries: 200, digests: 5 } },
+  db: { ready: true, latencyMs: 2, pool: { total: 3, max: 10, idle: 7, waiting: 0 }, tables: { feeds: 3, entries: 200, digests: 5 }, sizeBytes: 52428800 },
   rss: {
     refreshMinutes: 30, concurrency: 3, timeoutSeconds: 25,
     lastRefreshAt: Date.now() - 60000, nextRefreshAt: Date.now() + 1200000, dueCount: 1, refreshing: 0,
-    lastResult: { added: 5, failed: 1, durationMs: 1200, pruned: 0, skipped: 0 },
-    feeds: { total: 3, enabled: 2, cardEnabled: 2, neverFetched: 1, perFeedInterval: 1, error: 1 },
+    lastResult: { added: 5, failed: 1, durationMs: 1200, pruned: 0, skipped: 0, autoDisabled: 1 },
+    feeds: { total: 3, enabled: 2, cardEnabled: 2, neverFetched: 1, perFeedInterval: 1, error: 1, autoDisabled: 1 },
     entries: { total: 200, unread: 50, favorite: 8, added24h: 20, oldest: Date.now() - 2592000000, newest: Date.now() },
-    keepPerFeed: 300, keepDays: 0, autoRefreshMinutes: 0,
-    problems: [{ feedId: '2', title: 'demo - Telegram Channel', error: '502 Bad Gateway' }],
+    keepPerFeed: 300, keepDays: 0, autoRefreshMinutes: 0, feedFailLimit: 5,
+    problems: [{ feedId: '2', title: 'demo - Telegram Channel', error: '502 Bad Gateway', enabled: false, failStreak: 5 }],
   },
   digest: {
     enabled: true, time: '08:00', nextRunAt: Date.now() + 86400000, scope: 'enabled',
@@ -1496,7 +1496,7 @@ const withEFP = (el, fn) => {
     if (!document.querySelector('.stat-health')) throw new Error('无健康条');
     const secs = [...document.querySelectorAll('[data-pane="status"] details.sec')].map((d) => d.getAttribute('data-sec'));
     ['st-runtime', 'st-collect', 'st-problems', 'st-digest'].forEach((k) => { if (secs.indexOf(k) < 0) throw new Error('缺分组 ' + k); });
-    if (document.querySelectorAll('[data-pane="status"] .stat-card').length !== 8) throw new Error('卡片数 ' + document.querySelectorAll('[data-pane="status"] .stat-card').length);
+    if (document.querySelectorAll('[data-pane="status"] .stat-card').length !== 9) throw new Error('卡片数 ' + document.querySelectorAll('[data-pane="status"] .stat-card').length);
   });
   t('运行时长渲染（>1h 显示「小时」）', () => {
     const up = document.querySelector('#statUptime');
@@ -1508,6 +1508,27 @@ const withEFP = (el, fn) => {
     if (!msg.classList.contains('warn')) throw new Error('应 warn');
   });
   t('异常频道重试按钮', () => { if (!document.querySelector('[data-retry="2"]')) throw new Error('无重试按钮'); });
+  t('数据库体积卡片（v2.5.0）', () => {
+    const cards = [...document.querySelectorAll('[data-pane="status"] .stat-card')];
+    const card = cards.find((c) => c.querySelector('.stat-label') && c.querySelector('.stat-label').textContent === '数据库体积');
+    if (!card) throw new Error('无数据库体积卡片');
+    const v = card.querySelector('.stat-value').textContent;
+    if (v !== '50.0 MB') throw new Error('体积: ' + v);
+  });
+  t('自动停用徽标 + 重试并恢复文案（v2.5.0）', () => {
+    const badge = document.querySelector('.stat-problem-off');
+    if (!badge || badge.textContent.indexOf('已自动停用') < 0) throw new Error('无自动停用徽标');
+    const btn = document.querySelector('[data-retry="2"]');
+    if (btn.textContent.indexOf('重试并恢复') < 0) throw new Error('按钮: ' + btn.textContent);
+  });
+  t('自动停用计数与阈值行（v2.5.0）', () => {
+    const warn = document.querySelector('.stat-warn');
+    if (!warn || warn.textContent.indexOf('自动停用 1') < 0) throw new Error('无自动停用计数');
+    const rows = [...document.querySelectorAll('[data-sec="st-collect"] .stat-row')];
+    const row = rows.find((r) => r.querySelector('.stat-k') && r.querySelector('.stat-k').textContent === '自动停用');
+    if (!row) throw new Error('无自动停用阈值行');
+    if (row.textContent.indexOf('连续失败 ≥ 5 次') < 0) throw new Error('阈值: ' + row.textContent);
+  });
   t('分组默认展开态（异常开、运行收）', () => {
     if (!document.querySelector('[data-sec="st-problems"]').open) throw new Error('异常分组应默认展开');
     if (document.querySelector('[data-sec="st-runtime"]').open) throw new Error('运行分组应默认收起');
@@ -1532,6 +1553,7 @@ const withEFP = (el, fn) => {
     if (!clipboardWrites.length) throw new Error('未写剪贴板');
     const text = clipboardWrites[clipboardWrites.length - 1];
     if (text.indexOf('拾阅（shiyue）诊断信息') < 0 || text.indexOf('[RSS]') < 0 || text.indexOf('[数据库]') < 0) throw new Error('内容不符: ' + text.slice(0, 60));
+    if (text.indexOf('数据库体积: 50.0 MB') < 0 || text.indexOf('自动停用阈值: 连续失败 5 次') < 0 || text.indexOf('上次结果: 新增 5 | 失败 1 | 自动停用 1') < 0) throw new Error('v2.5.0 诊断字段缺失: ' + text.slice(0, 400));
     const t0 = callsOf('toast');
     if (!t0.length || t0[t0.length - 1][1].indexOf('诊断信息已复制') < 0) throw new Error('toast 不符');
   });

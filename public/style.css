@@ -2587,6 +2587,7 @@ body { padding-bottom: env(safe-area-inset-bottom, 0px); }
 }
 .stat-muted { color: var(--text-faint); }
 .stat-bad { color: var(--err-text); }
+.stat-warn { color: var(--warn-text); }
 
 /* 异常频道：只在有失败时渲染 */
 .stat-problems {
@@ -2619,6 +2620,16 @@ body { padding-bottom: env(safe-area-inset-bottom, 0px); }
   color: var(--err-text);
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 「已自动停用」徽标（v2.5.0）：连续失败达到上限、采集已停的频道 */
+.stat-problem-off {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  color: var(--warn-text);
+  background: var(--warn-bg);
   white-space: nowrap;
 }
 .stat-problem .btn { flex: none; }

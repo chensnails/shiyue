@@ -114,24 +114,27 @@ function buildDiagnostics(d) {
   L.push('往返延迟: ' + (db.latencyMs == null ? '—' : db.latencyMs + ' ms'));
   if (db.pool) L.push('连接池: ' + db.pool.total + '/' + db.pool.max + '（空闲 ' + db.pool.idle + '，等待 ' + db.pool.waiting + '）');
   if (db.tables) L.push('表行数: feeds ' + db.tables.feeds + ' | entries ' + db.tables.entries + ' | digests ' + db.tables.digests);
+  if (db.sizeBytes) L.push('数据库体积: ' + fmtBytes(db.sizeBytes));
   L.push('');
   L.push('[RSS]');
   L.push('间隔: 全局每 ' + rss.refreshMinutes + ' 分钟 | 单独设置 ' + f.perFeedInterval + ' 个'
     + ' | 并发 ' + rss.concurrency + ' | 超时 ' + rss.timeoutSeconds + 's');
   L.push('保留: 每频道 ' + (rss.keepPerFeed > 0 ? rss.keepPerFeed + ' 条' : '无条数上限') + ' | ' + (rss.keepDays ? '最长 ' + rss.keepDays + ' 天' : '不限时长')
     + ' | 收藏条目不清理');
+  L.push('自动停用阈值: 连续失败 ' + rss.feedFailLimit + ' 次' + (f.autoDisabled ? ' | 当前已停用 ' + f.autoDisabled + ' 个' : ''));
   L.push('上次抓取: ' + (rss.lastRefreshAt ? fmtFull(rss.lastRefreshAt) : '无'));
   L.push('下次抓取: ' + (rss.nextRefreshAt ? fmtFull(rss.nextRefreshAt) : '—')
     + (rss.dueCount ? ' | 已到期 ' + rss.dueCount + ' 个' : ''));
   if (rss.lastResult) {
     L.push('上次结果: 新增 ' + rss.lastResult.added + ' | 失败 ' + rss.lastResult.failed
+      + (rss.lastResult.autoDisabled ? ' | 自动停用 ' + rss.lastResult.autoDisabled : '')
       + ' | 耗时 ' + rss.lastResult.durationMs + 'ms');
   }
   L.push('频道: 共 ' + f.total + ' | 采集中 ' + f.enabled + ' | 卡片 ' + f.cardEnabled
     + ' | 异常 ' + f.error + ' | 未抓过 ' + f.neverFetched);
   L.push('条目: 共 ' + e.total + ' | 未读 ' + e.unread + ' | 收藏 ' + e.favorite + ' | 近 24h 新增 ' + e.added24h);
   L.push('页面自动刷新: ' + (rss.autoRefreshMinutes ? '每 ' + rss.autoRefreshMinutes + ' 分钟' : '关闭'));
-  (rss.problems || []).forEach((p) => L.push('  ! ' + p.title + ' → ' + p.error));
+  (rss.problems || []).forEach((p) => L.push('  ! ' + p.title + (p.enabled === false ? '（已自动停用）' : '') + ' → ' + p.error));
   L.push('');
   L.push('[日报]');
   L.push('自动生成: ' + (dg.enabled ? '开 · ' + dg.time : '关') + ' | 存档 ' + dg.count + ' 份');
@@ -341,6 +344,8 @@ export function StatusPane() {
               sub={`近 24h 新增 ${fmtNum(e.added24h)}`} />
             <StatCard label="日报存档" value={fmtNum(db.tables && db.tables.digests)}
               sub={dg.oldestDate ? `最早 ${dg.oldestDate}` : ''} />
+            <StatCard label="数据库体积" value={db.sizeBytes ? fmtBytes(db.sizeBytes) : '—'}
+              sub="含索引 · 图片缓存另计" />
           </div>
         </StatSection>
 
@@ -355,7 +360,8 @@ export function StatusPane() {
               ? <>{fmtFull(rss.nextRefreshAt)} <span className="stat-muted">（{fmtRel(rss.nextRefreshAt, 'future')}{rss.dueCount ? ` · 已到期 ${rss.dueCount} 个待抓` : ''}）</span></>
               : '—'} />
             <StatRow k="在途抓取" v={rss.refreshing ? `${rss.refreshing} 个频道正在抓取` : '空闲'} />
-            <StatRow k="频道" v={<>{`${f.total} 个 · 采集中 ${f.enabled} · 卡片展示 ${f.cardEnabled} · 未抓过 ${f.neverFetched}`}{f.error ? <> · <span className="stat-bad">异常 {f.error}</span></> : null}</>} />
+            <StatRow k="频道" v={<>{`${f.total} 个 · 采集中 ${f.enabled} · 卡片展示 ${f.cardEnabled} · 未抓过 ${f.neverFetched}`}{f.error ? <> · <span className="stat-bad">异常 {f.error}</span></> : null}{f.autoDisabled ? <> · <span className="stat-warn">自动停用 {f.autoDisabled}</span></> : null}</>} />
+            {f.autoDisabled ? <StatRow k="自动停用" v={<>{`${f.autoDisabled} 个频道连续失败 ≥ ${rss.feedFailLimit} 次已停止采集`}{' · '}<span className="stat-muted">在下方「异常频道」重试，成功会自动恢复采集</span></>} /> : null}
             <StatRow k="条目" v={`${fmtNum(e.total)} 条 · 近 24h 新增 ${fmtNum(e.added24h)} · 未读 ${fmtNum(e.unread)} · 收藏 ${fmtNum(e.favorite)}`} />
             <StatRow k="保留策略" v={<>{rss.keepPerFeed > 0 ? `每频道最多 ${fmtNum(rss.keepPerFeed)} 条` : '每频道不设条数上限'}{rss.keepDays ? ` · 最长 ${fmtNum(rss.keepDays)} 天` : ' · 不限时长'}{' · '}<span className="stat-muted">收藏的条目不参与清理</span></>} />
             <StatRow k="时间跨度" v={e.oldest && e.newest ? `${fmtFull(e.oldest)} → ${fmtFull(e.newest)}` : '—'} />
@@ -370,10 +376,11 @@ export function StatusPane() {
                 <div className="stat-problem" key={p.feedId}>
                   <i className="stat-dot bad" />
                   <span className="stat-problem-name" title={p.title}>{p.title}</span>
+                  {p.enabled === false && <span className="stat-problem-off" title={`连续失败已达上限，已自动停止采集；重试成功会自动恢复`}>已自动停用</span>}
                   <span className="stat-problem-err" title={p.error}>{p.error}</span>
                   <button className="btn btn-ghost btn-sm" data-retry={p.feedId}
                     disabled={!!retrying[p.feedId]} onClick={() => retry(p.feedId)}>
-                    {retrying[p.feedId] ? '抓取中…' : '重试'}
+                    {retrying[p.feedId] ? '抓取中…' : (p.enabled === false ? '重试并恢复' : '重试')}
                   </button>
                 </div>
               ))}

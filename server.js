@@ -98,6 +98,8 @@ function defaults() {
       keepDays: clampInt(env.KEEP_DAYS, 0, 0, 3650),
       timeoutSeconds: clampInt(env.RSS_TIMEOUT_SECONDS, 25, 5, 120),
       concurrency: clampInt(env.REFRESH_CONCURRENCY, 3, 1, 10),
+      // 连续抓取失败达到此次数 → 自动停用该频道的采集（状态页可一键恢复）
+      feedFailLimit: int(env.FEED_FAIL_LIMIT, 5),
       // 网页自动刷新：前端按这个间隔重新拉列表，0 = 关闭
       autoRefreshMinutes: clampInt(env.AUTO_REFRESH_MINUTES, 0, 0, 1440),
       // 出网代理：空 = 直连；http(s):// 或 socks5://
@@ -133,6 +135,7 @@ function normalizeSettings(s) {
   s.source.keepDays = clampInt(s.source.keepDays, 0, 0, 3650);
   s.source.timeoutSeconds = clampInt(s.source.timeoutSeconds, 25, 5, 120);
   s.source.concurrency = clampInt(s.source.concurrency, 3, 1, 10);
+  s.source.feedFailLimit = clampInt(s.source.feedFailLimit, 5, 2, 20);
   s.source.autoRefreshMinutes = clampInt(s.source.autoRefreshMinutes, 0, 0, 1440);
   // 代理：剥空白 + 长度上限 + 不接受非标准协议（前端做提示，服务端做兜底校验）
   s.source.proxyUrl = String(s.source.proxyUrl || '').trim().slice(0, 500);
@@ -302,6 +305,11 @@ async function refreshGroup(key, members) {
   return p;
 }
 
+/** 连续失败自动停用的阈值（settings 优先；normalizeSettings 已夹过，这里再兜一手） */
+function feedFailLimit() {
+  return clampInt(settings && settings.source && settings.source.feedFailLimit, 5, 2, 20);
+}
+
 async function doRefreshGroup(key, members) {
   // 5s 内刚抓过这个 URL → 跳过（防连点刷新打爆源站）
   const last = recentFetchMs.get(key);
@@ -322,7 +330,7 @@ async function doRefreshGroup(key, members) {
     });
 
     if (r.notModified) {
-      await Promise.all(members.map((m) => db.saveFeedMeta(m.id, { status: 'ok', error: null }).catch(() => {})));
+      await Promise.all(members.map((m) => db.saveFeedMeta(m.id, { status: 'ok', error: null, failStreak: 0 }).catch(() => {})));
       return { url: key, notModified: true, added: 0, total: 0, feeds: members.length };
     }
 
@@ -332,14 +340,25 @@ async function doRefreshGroup(key, members) {
       added += await db.upsertEntries(m.id, r.items);
       await db.saveFeedMeta(m.id, {
         title: r.title, siteUrl: r.siteUrl, description: r.description, iconUrl: r.iconUrl,
-        etag: r.etag, lastModified: r.lastModified, status: 'ok', error: null,
+        etag: r.etag, lastModified: r.lastModified, status: 'ok', error: null, failStreak: 0,
       }).catch(() => {});
     }));
     return { url: key, notModified: false, added, total: r.items.length, feeds: members.length };
   } catch (e) {
     const msg = String((e && e.message) || e).slice(0, 300);
-    await Promise.all(members.map((m) => db.saveFeedMeta(m.id, { status: 'error', error: msg }).catch(() => {})));
-    return { url: key, error: msg, feeds: members.length };
+    const limit = feedFailLimit();
+    const autoOff = [];
+    await Promise.all(members.map(async (m) => {
+      await db.saveFeedMeta(m.id, { status: 'error', error: msg }).catch(() => {});
+      const streak = await db.bumpFeedFailStreak(m.id).catch(() => 0);
+      // 达到上限且还在采集 → 自动停用（订阅与已抓条目保留，状态页可一键恢复）
+      if (streak >= limit && m.enabled) autoOff.push({ id: m.id, title: m.title || m.url, streak });
+    }));
+    for (const f of autoOff) {
+      await db.setFeedEnabled(f.id, false).catch(() => {});
+      log(`[rss] 频道连续失败 ${f.streak} 次，已自动停用采集：${f.title}`);
+    }
+    return { url: key, error: msg, feeds: members.length, autoDisabled: autoOff.length };
   } finally {
     recentFetchMs.set(key, Date.now());   // 无论成败都记时间，避免源站被连点打爆
   }
@@ -398,19 +417,21 @@ async function refreshFeeds(feeds, { concurrency, total, startedAt = Date.now(),
   }
   const added = results.reduce((n, r) => n + (r.added || 0), 0);
   const failed = results.filter((r) => r.error).length;
+  const autoDisabled = results.reduce((n, r) => n + (r.autoDisabled || 0), 0);
   const skipped = total == null ? 0 : Math.max(0, total - feeds.length);
   lastRefresh = {
     at: Date.now(), startedAt, durationMs: Date.now() - startedAt,
-    results, added, pruned: prunedByCount + prunedByAge + prunedImg, prunedByAge, prunedImg, skipped, failed,
+    results, added, pruned: prunedByCount + prunedByAge + prunedImg, prunedByAge, prunedImg, skipped, failed, autoDisabled,
   };
   log(`[rss] ${label}完成：${entries.length} 个 URL 组 / ${feeds.length} 个订阅，新增 ${added} 条`
     + (skipped ? `，跳过 ${skipped} 个（未开启采集或未到期）` : '')
     + (failed ? `，失败 ${failed} 个` : '')
+    + (autoDisabled ? `，连续失败自动停用 ${autoDisabled} 个` : '')
     + (prunedByCount ? `，按条数清理 ${prunedByCount} 条` : '')
     + (prunedByAge ? `，按时间清理 ${prunedByAge} 条` : '')
     + (prunedImg ? `，图片缓存清理 ${prunedImg} 张` : ''));
   return {
-    at: lastRefresh.at, results, added, failed, skipped,
+    at: lastRefresh.at, results, added, failed, skipped, autoDisabled,
     pruned: lastRefresh.pruned, prunedByAge, prunedImg,
   };
 }
@@ -941,7 +962,14 @@ const server = http.createServer(async (req, res) => {
         if (!feed) { json(res, 404, { error: '频道不存在' }); return; }
 
         if (feedRoute[2] && req.method === 'POST') {
+          const wasEnabled = feed.enabled;
           const r = await refreshFeed(feed);
+          // 「因连续失败被自动停用」的频道重试成功 → 顺手恢复采集并清零失败计数
+          //（坏源恢复了不用人工再去开开关；用户手动停用的不受影响）
+          if (!r.error && !wasEnabled && Number(feed.fail_streak || 0) >= feedFailLimit()) {
+            await db.resetFeedFailStreak(id, user.id).catch(() => {});
+            await db.setFeedEnabled(id, true).catch(() => {});
+          }
           json(res, 200, { ok: !r.error, result: r, feed: toFeedDto(await db.getFeed(id, user.id), settings.source.refreshMinutes) });
           return;
         }
@@ -963,6 +991,8 @@ const server = http.createServer(async (req, res) => {
               ? null : clampInt(n, null, 5, 1440);
           }
           await db.updateFeed(id, patch, user.id);
+          // 手动重新打开采集 = 用户确认「这源我想再试试」：失败计数清零，给足一整轮观察期
+          if (patch.enabled === true) await db.resetFeedFailStreak(id, user.id);
           json(res, 200, { ok: true, feed: toFeedDto(await db.getFeed(id, user.id), settings.source.refreshMinutes) });
           return;
         }
@@ -1100,6 +1130,8 @@ const server = http.createServer(async (req, res) => {
             keepDays: settings.source.keepDays,
             timeoutSeconds: settings.source.timeoutSeconds,
             concurrency: settings.source.concurrency,
+            // v2.5.0：连续失败达到此次数自动停用该频道采集（状态页可一键恢复）
+            feedFailLimit: settings.source.feedFailLimit,
             autoRefreshMinutes: settings.source.autoRefreshMinutes,
             // v1.5.0 修复：原来漏返该字段，前端「出网代理」输入框重开面板后是空的，
             // 用户再点保存会把我置成空——GET 与 POST 的字段集必须一致
@@ -1163,6 +1195,7 @@ const server = http.createServer(async (req, res) => {
           if (s.keepDays !== undefined) next.keepDays = clampInt(s.keepDays, 0, 0, 3650);
           if (s.timeoutSeconds !== undefined) next.timeoutSeconds = clampInt(s.timeoutSeconds, 25, 5, 120);
           if (s.concurrency !== undefined) next.concurrency = clampInt(s.concurrency, 3, 1, 10);
+          if (s.feedFailLimit !== undefined) next.feedFailLimit = clampInt(s.feedFailLimit, 5, 2, 20);
           if (s.autoRefreshMinutes !== undefined) next.autoRefreshMinutes = clampInt(s.autoRefreshMinutes, 0, 0, 1440);
           if (s.proxyUrl !== undefined) next.proxyUrl = String(s.proxyUrl || '').trim().slice(0, 500);
           // v2.4.0：图片缓存。前端传的是字符串，clampInt 会 parseInt；脏值夹回区间而不是报错
@@ -1518,12 +1551,13 @@ async function buildStatus() {
   const st = db.status();
 
   /* ---- 数据库 ---- */
-  const dbInfo = { ready: st.ready, error: st.error || null, latencyMs: null, pool: null, tables: null };
+  const dbInfo = { ready: st.ready, error: st.error || null, latencyMs: null, pool: null, tables: null, sizeBytes: null };
   if (st.ready) {
     try {
-      const [latencyMs, tables] = await Promise.all([db.ping(), db.tableCounts()]);
+      const [latencyMs, tables, sizeBytes] = await Promise.all([db.ping(), db.tableCounts(), db.pgDatabaseSize()]);
       dbInfo.latencyMs = latencyMs;
       dbInfo.tables = tables;
+      dbInfo.sizeBytes = sizeBytes;
     } catch (e) {
       dbInfo.error = String((e && e.message) || e);
     }
@@ -1535,7 +1569,7 @@ async function buildStatus() {
   }
 
   /* ---- RSS ---- */
-  let feedStats = { total: 0, enabled: 0, cardEnabled: 0, error: 0, neverFetched: 0, perFeedInterval: 0 };
+  let feedStats = { total: 0, enabled: 0, cardEnabled: 0, error: 0, neverFetched: 0, perFeedInterval: 0, autoDisabled: 0 };
   let problems = [];
   let dueCount = 0;
   let nextRefreshAt = null;
@@ -1551,10 +1585,13 @@ async function buildStatus() {
         neverFetched: feeds.filter((f) => !f.lastFetchedAt).length,
         // 有多少个频道用了自己的抓取频率（其余跟随全局）
         perFeedInterval: feeds.filter((f) => f.refreshMinutes != null).length,
+        // 因连续失败被自动停用的频道数（重试成功会自动恢复）
+        autoDisabled: feeds.filter((f) => !f.enabled && f.failStreak >= feedFailLimit()).length,
       };
       problems = feeds.filter((f) => f.status === 'error').map((f) => ({
         feedId: f.id, title: f.title, error: f.error || '抓取失败',
         lastFetchedAt: f.lastFetchedAt, groupName: f.groupName,
+        enabled: f.enabled, failStreak: f.failStreak,
       }));
       // 「下次抓取」= 已开启采集的频道里最早到期的那个；已经过了的时刻算「现在就该抓」
       let earliest = null;
@@ -1630,6 +1667,7 @@ async function buildStatus() {
       autoRefreshMinutes: settings ? settings.source.autoRefreshMinutes : 0,
       concurrency: settings ? settings.source.concurrency : 3,
       timeoutSeconds: settings ? settings.source.timeoutSeconds : 25,
+      feedFailLimit: feedFailLimit(),
       proxyUrl: settings ? settings.source.proxyUrl : '',
       lastRefreshAt: lastRefresh.at || null,
       nextRefreshAt,
@@ -1637,7 +1675,7 @@ async function buildStatus() {
       inFlight: inFlightUrl.size,
       lastResult: lastRefresh.at ? {
         added: lastRefresh.added, pruned: lastRefresh.pruned,
-        skipped: lastRefresh.skipped, failed: lastRefresh.failed,
+        skipped: lastRefresh.skipped, failed: lastRefresh.failed, autoDisabled: lastRefresh.autoDisabled || 0,
         durationMs: lastRefresh.durationMs,
       } : null,
       feeds: feedStats,

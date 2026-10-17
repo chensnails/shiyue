@@ -165,6 +165,8 @@ const MIGRATIONS = [
                   AND pg_get_constraintdef(c.oid) NOT LIKE '%owner_id%')
      THEN ALTER TABLE digests DROP CONSTRAINT digests_pkey; END IF;
    END $$`,
+  // v19：抓取连续失败计数（达到上限自动停用采集；抓取成功清零，手动恢复也清零）
+  `ALTER TABLE feeds ADD COLUMN IF NOT EXISTS fail_streak SMALLINT NOT NULL DEFAULT 0`,
 ];
 
 
@@ -337,7 +339,7 @@ module.exports = function createDb({ connectionString, log = console.log }) {
   const FEED_SELECT = `
     SELECT f.id, f.url, f.title, f.site_url, f.description, f.icon_url,
            f.enabled, f.card_enabled, f.group_name, f.custom_title, f.refresh_minutes,
-           f.sort_order, f.last_status, f.last_error, f.last_fetched_at,
+           f.sort_order, f.last_status, f.last_error, f.last_fetched_at, f.fail_streak,
            f.created_at, COALESCE(e.n, 0) AS entry_count,
            COALESCE(u.n, 0) AS unread_count
     FROM feeds f
@@ -413,20 +415,49 @@ module.exports = function createDb({ connectionString, log = console.log }) {
 
   /** 记录一次抓取结果（成功时同时写入 feed 元信息与条件请求头） */
   async function saveFeedMeta(id, meta) {
+    // meta.failStreak：传数字（含 0）时直接覆写失败计数（ok 路径传 0 清零）；
+    // 不传则保持原值（error 路径另行 bumpFeedFailStreak 累加）
+    const vals = [
+      id, meta.title || null, meta.siteUrl || null, meta.description || null,
+      meta.iconUrl || null, meta.etag || null, meta.lastModified || null,
+      meta.status || 'ok', meta.error || null,
+    ];
+    let streakSql = '';
+    if (Number.isFinite(meta.failStreak)) {
+      vals.push(Math.max(0, Number(meta.failStreak) | 0));
+      streakSql = `, fail_streak = $${vals.length}`;
+    }
     await q(
       `UPDATE feeds SET title = COALESCE($2, title),
          site_url = COALESCE($3, site_url),
          description = COALESCE($4, description),
          icon_url = COALESCE($5, icon_url),
          etag = $6, last_modified = $7,
-         last_status = $8, last_error = $9,
+         last_status = $8, last_error = $9${streakSql},
          last_fetched_at = now(), updated_at = now()
        WHERE id = $1`,
-      [id, meta.title || null, meta.siteUrl || null, meta.description || null,
-        meta.iconUrl || null, meta.etag || null, meta.lastModified || null,
-        meta.status || 'ok', meta.error || null]
+      vals
     );
   }
+
+  /** 失败计数 +1 并返回新值（极简 UPDATE...RETURNING，与 saveFeedMeta 分开以免两条 SQL 竞争） */
+  async function bumpFeedFailStreak(id) {
+    const { rows } = await q(
+      'UPDATE feeds SET fail_streak = fail_streak + 1, updated_at = now() WHERE id = $1 RETURNING fail_streak',
+      [id]
+    );
+    return rows[0] ? Number(rows[0].fail_streak) : 0;
+  }
+
+  /** 失败计数清零（用户手动恢复采集 / 重试成功时调用） */
+  const resetFeedFailStreak = async (id, ownerId) => {
+    await q('UPDATE feeds SET fail_streak = 0, updated_at = now() WHERE id = $1 AND owner_id = $2', [id, ownerId]);
+  };
+
+  /** 直接置采集开关（自动停用 / 自动恢复用，不校验 owner——调用方是服务端内部逻辑） */
+  const setFeedEnabled = async (id, enabled) => {
+    await q('UPDATE feeds SET enabled = $2, updated_at = now() WHERE id = $1', [id, !!enabled]);
+  };
 
   const deleteFeed = async (id, ownerId) =>
     (await q('DELETE FROM feeds WHERE id = $1 AND owner_id = $2', [id, ownerId])).rowCount > 0;
@@ -847,6 +878,12 @@ module.exports = function createDb({ connectionString, log = console.log }) {
     return { count: r.rows[0].n, bytes: Number(r.rows[0].bytes) };
   }
 
+  /** 数据库体积（字节）——状态页展示，防entries无限增长悄悄拖慢查询 */
+  async function pgDatabaseSize() {
+    const { rows } = await q('SELECT pg_database_size(current_database()) AS bytes');
+    return Number(rows[0] ? rows[0].bytes : 0);
+  }
+
   return {
     pool, q, start, onReady, status, close, migrate,
     getSettings, setSetting, setSettings,
@@ -854,9 +891,10 @@ module.exports = function createDb({ connectionString, log = console.log }) {
     setUserPassword, setUserRole, setUsername, setUserPrefs, deleteUser, bootstrapOwnership,
     listFeeds, getFeed, addFeed, updateFeed, saveFeedMeta, deleteFeed, reorderFeeds,
     enabledFeedIds, cardFeedIds, allEnabledFeeds, allFeeds, allUserIds,
+    bumpFeedFailStreak, resetFeedFailStreak, setFeedEnabled,
     upsertEntries, queryEntries, getEntry, countEntries, tagCounts, pruneEntries, pruneEntriesByAge, entriesSince,
     setEntryFlags, markEntriesRead, entryFlagCounts,
-    tableCounts, entryWindow, ping,
+    tableCounts, entryWindow, ping, pgDatabaseSize,
     saveDigest, readDigest, listDigestDates, hasDigest, digestStatsAll, pruneDigests,
     getImageCache, setImageCache, pruneImageCache, clearImageCache, imageCacheStats,
   };
